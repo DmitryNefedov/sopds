@@ -46,20 +46,33 @@
 {%  for b in books %}
 		<div class="large-12 column">
 			<b>{{ b.title }}</b>
-			<i style="font-size:80%;">{% trans "Download:" %} </i>
-			<i><a href="{% url 'opds_catalog:download' b.id 0 %}"><span class="label small">{{b.format}}</span></a></i>&nbsp;
-            {% if not b.format in nozip %}
-                <i><a href="{% url 'opds_catalog:download' b.id 1 %}"><span class="label small">{{b.format}}+zip</span></a></i>&nbsp;
-            {%  endif %}
-			{% if b.format == 'fb2' and fb2toepub %}
-			   <i><a href="{% url 'opds_catalog:convert' b.id 'epub' %}"><span class="label small">epub</span></a></i>&nbsp;
-			{% endif %}
-			{% if b.format == 'fb2' and fb2tomobi %}
-			   <i><a href="{% url 'opds_catalog:convert' b.id 'mobi' %}"><span class="label small">mobi</span></a></i>&nbsp;
-			{% endif %}			
-			{% if isbookshelf %}
-			&nbsp;&nbsp;<i><a href="#" onclick="del_bsbook({{ b.id }},'{{b.title}}');"><span class="secondary label small">&nbsp;{% trans "Delete from bookshelf" %}&nbsp;</span></a></i>
-		    {% endif %}
+			<p>
+                <i style="font-size:80%;">{% trans "Download:" %} </i>
+                <i><a href="{% url 'opds_catalog:download' b.id 0 %}"><span style="cursor: pointer;" class="label small">{{b.format}}</span></a></i>&nbsp;
+                {% if not b.format in nozip %}
+                    <i><a href="{% url 'opds_catalog:download' b.id 1 %}"><span style="cursor: pointer;" class="label small">{{b.format}}+zip</span></a></i>&nbsp;
+                {%  endif %}
+                {% if b.format == 'fb2' and fb2toepub %}
+                <i><a href="{% url 'opds_catalog:convert' b.id 'epub' %}"><span style="cursor: pointer;" class="label small">epub</span></a></i>&nbsp;
+                {% endif %}
+                {% (if b.format == 'fb2' OR b.format == 'epub') and fb2tomobi %}
+                <i><a href="{% url 'opds_catalog:convert' b.id 'mobi' %}"><span style="cursor: pointer;" class="label small">mobi</span></a></i>&nbsp;
+                {% endif %}			
+                {% if isbookshelf %}
+                &nbsp;&nbsp;<i><a href="#" onclick="del_bsbook({{ b.id }},'{{b.title}}');"><span class="secondary label small">&nbsp;{% trans "Delete from bookshelf" %}&nbsp;</span></a></i>
+                {% endif %}
+            </p>
+            <p>
+                {% if b.authors.count > 0 %}
+                    <a target="_blank" href="https://www.goodreads.com/search?utf8=%E2%9C%93&q={{b.title}} {{b.authors.first.full_name}}&search_type=books">
+                        <img alt="GoodReads" width='80' height='17' src="/static/images/goodreads_logo.svg" />
+                    </a>
+                {% else %}
+                    <a target="_blank" href="https://www.goodreads.com/search?utf8=%E2%9C%93&q={{b.title}}&search_type=books">
+                        <img alt="GoodReads" width='80' height='17' src="/static/images/goodreads_logo.svg" />
+                    </a>
+                {% endif %}
+            </p>
 		</div>
 		
 		<div class="large-12 column">
