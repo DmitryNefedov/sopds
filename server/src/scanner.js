@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import db, { updateCounters } from './db.js';
-import config from './config.js';
+import { get as setting } from './settings.js';
 import { parseBook } from './books/index.js';
 import { normalize, getLangCode } from './lang.js';
 
 const CAT_NORMAL = 0;
 const CAT_ZIP = 1;
+
+// Populated at the start of each scan() from the current settings.
+let CTX = { bookExtensions: [], zipScan: true };
 
 // ---- prepared statements -------------------------------------------------
 const S = {
@@ -116,17 +119,25 @@ function addBook({ filename, relDir, catalogId, catType, filesize, meta }) {
   return bookId;
 }
 
-export function scan({ log = console.log } = {}) {
-  const root = config.rootLib;
+export function scan({ log = console.log, root } = {}) {
+  root = root || setting('rootLib');
+  CTX = {
+    bookExtensions: setting('bookExtensions')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((e) => e.toLowerCase()),
+    zipScan: setting('zipScan'),
+    deleteMissing: setting('deleteMissing'),
+  };
   if (!fs.existsSync(root)) {
     log(`Book collection directory not found: ${root}`);
-    return { added: 0, skipped: 0, removed: 0, bad: 0 };
+    return { added: 0, skipped: 0, removed: 0, bad: 0, error: 'collection directory not found' };
   }
   const stats = { added: 0, skipped: 0, removed: 0, bad: 0, archives: 0 };
   const tx = db.transaction(() => {
     S.availPrepare.run();
     walk(root, root, stats, log);
-    stats.removed = S.deleteGone.run().changes;
+    if (CTX.deleteMissing) stats.removed = S.deleteGone.run().changes;
   });
   tx();
   updateCounters();
@@ -151,10 +162,10 @@ function walk(dir, root, stats, log) {
     }
     const ext = path.extname(entry.name).toLowerCase();
     if (ext === '.zip') {
-      if (config.zipScan) processZip(abs, root, stats, log);
+      if (CTX.zipScan) processZip(abs, root, stats, log);
       continue;
     }
-    if (!config.bookExtensions.includes(ext)) continue;
+    if (!CTX.bookExtensions.includes(ext)) continue;
     processFile(abs, root, stats, log);
   }
 }
@@ -214,7 +225,7 @@ function processZip(abs, root, stats, log) {
   for (const entry of zip.getEntries()) {
     if (entry.isDirectory) continue;
     const ext = path.extname(entry.entryName).toLowerCase();
-    if (!config.bookExtensions.includes(ext)) continue;
+    if (!CTX.bookExtensions.includes(ext)) continue;
     const filename = entry.entryName;
     const existing = S.findBook.get(relZip, filename);
     if (existing) {

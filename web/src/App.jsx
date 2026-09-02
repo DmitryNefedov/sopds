@@ -31,6 +31,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import CollectionsBookmarkIcon from '@mui/icons-material/CollectionsBookmark';
 import CategoryIcon from '@mui/icons-material/Category';
 import FolderIcon from '@mui/icons-material/Folder';
+import SettingsIcon from '@mui/icons-material/Settings';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import { ColorModeContext } from './main.jsx';
@@ -43,6 +44,7 @@ import Series from './pages/Series.jsx';
 import Genres from './pages/Genres.jsx';
 import BookList from './pages/BookList.jsx';
 import Catalogs from './pages/Catalogs.jsx';
+import Admin from './pages/Admin.jsx';
 
 const NAV = [
   { to: '/', label: 'Home', icon: <HomeIcon /> },
@@ -51,6 +53,7 @@ const NAV = [
   { to: '/series', label: 'Series', icon: <CollectionsBookmarkIcon /> },
   { to: '/genres', label: 'Genres', icon: <CategoryIcon /> },
   { to: '/catalogs', label: 'Catalogs', icon: <FolderIcon /> },
+  { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
 ];
 
 function SearchField() {
@@ -174,6 +177,7 @@ export default function App() {
             <Route path="/genres" element={<Genres />} />
             <Route path="/genres/:id" element={<Genres />} />
             <Route path="/catalogs" element={<Catalogs />} />
+            <Route path="/settings" element={<Admin />} />
           </Routes>
         </Container>
       </Box>

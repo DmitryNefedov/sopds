@@ -8,6 +8,21 @@ export async function apiGet(pathAndQuery) {
   return res.json();
 }
 
+export async function apiSend(method, pathAndQuery, body) {
+  const res = await fetch(`${BASE}/api${pathAndQuery}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `API ${res.status}`);
+    err.fields = data.fields || null;
+    throw err;
+  }
+  return data;
+}
+
 export const bookDownloadUrl = (id, zip = false) =>
   `${BASE}/api/books/${id}/download${zip ? '?zip=1' : ''}`;
 export const bookCoverUrl = (id) => `${BASE}/api/books/${id}/cover`;

@@ -7,8 +7,11 @@ import compression from 'compression';
 import morgan from 'morgan';
 import config from './config.js';
 import { initSchema, updateCounters } from './db.js';
+import { S } from './settings.js';
+import { startScheduler } from './scheduler.js';
 import apiRoutes from './routes/api.js';
 import opdsRoutes from './routes/opds.js';
+import adminRoutes from './routes/admin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,6 +24,7 @@ app.use(cors());
 app.use(morgan('tiny'));
 app.use(express.json());
 
+app.use('/api/admin', adminRoutes);
 app.use('/api', apiRoutes);
 app.use('/opds', opdsRoutes);
 
@@ -43,6 +47,8 @@ app.use((err, req, res, _next) => {
 
 app.listen(config.port, () => {
   console.log(`SimpleOPDS API listening on http://localhost:${config.port}`);
-  console.log(`  book collection: ${config.rootLib}`);
+  console.log(`  book collection: ${S.rootLib}`);
   console.log(`  database:        ${config.dbPath}`);
+  startScheduler();
+  if (S.scanEnabled) console.log(`  scheduled scan:  ${S.scanCron}`);
 });

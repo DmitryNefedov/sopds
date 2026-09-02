@@ -3,6 +3,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import AdmZip from 'adm-zip';
 import config from './config.js';
+import { S } from './settings.js';
 import { extractCover } from './books/index.js';
 
 const CAT_NORMAL = 0;
@@ -22,7 +23,7 @@ export function mimeFor(fmt) {
 
 // Returns a Buffer with the raw book bytes, or throws if the file is missing.
 export function readBookBytes(book) {
-  const full = path.join(config.rootLib, book.path);
+  const full = path.join(S.rootLib, book.path);
   if (book.cat_type === CAT_NORMAL) {
     return fs.readFileSync(path.join(full, book.filename));
   }

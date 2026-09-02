@@ -1,5 +1,5 @@
 import db from './db.js';
-import config from './config.js';
+import { S } from './settings.js';
 import { normalize } from './lang.js';
 
 const clampPage = (p) => {
@@ -9,7 +9,7 @@ const clampPage = (p) => {
 
 const clampLimit = (l) => {
   const n = Number.parseInt(l, 10);
-  if (!Number.isFinite(n) || n <= 0) return config.maxItems;
+  if (!Number.isFinite(n) || n <= 0) return S.maxItems;
   return Math.min(n, 200);
 };
 
@@ -102,7 +102,7 @@ export function searchBooks(q, { page = 1, limit } = {}) {
     )
     .all({ like, limit: l, offset });
   let items = rows.map(hydrateBook);
-  if (config.doublesHide) items = hideDoubles(items);
+  if (S.doublesHide) items = hideDoubles(items);
   return { items, ...pageMeta(total, p, l) };
 }
 

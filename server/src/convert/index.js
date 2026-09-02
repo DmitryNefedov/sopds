@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
 import config from '../config.js';
+import { S, onChange } from '../settings.js';
 import { fb2ToIr, irToFb2 } from './fb2.js';
 import { epubToIr, irToEpub } from './epub.js';
 import { mobiToIr, irToMobi } from './mobi.js';
@@ -20,10 +21,13 @@ function irToFb2Buf(ir) {
 // ---- external converter (Calibre) --------------------------------------
 
 let _externalPath;
+onChange((patch) => {
+  if ('ebookConvert' in patch) _externalPath = undefined; // re-probe next call
+});
 function externalConverter() {
   if (_externalPath !== undefined) return _externalPath;
   _externalPath = null;
-  const candidate = config.ebookConvert;
+  const candidate = S.ebookConvert;
   if (!candidate) return _externalPath;
   try {
     if (candidate.includes('/')) {

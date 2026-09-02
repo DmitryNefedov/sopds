@@ -10,7 +10,7 @@ import {
   translitName,
   nocover,
 } from '../files.js';
-import { scan } from '../scanner.js';
+import { S } from '../settings.js';
 import { convert, CONVERTIBLE, converterInfo, ConvertError } from '../convert/index.js';
 
 const router = Router();
@@ -165,18 +165,12 @@ router.get('/catalogs', (req, res) => {
 router.get('/stats', (req, res) => {
   res.json({
     ...repo.stats(),
-    title: config.title,
-    subtitle: config.subtitle,
+    title: S.title,
+    subtitle: S.subtitle,
     lang_menu: LANG_MENU,
   });
 });
 router.get('/random', (req, res) => res.json(repo.randomBook()));
 router.get('/convert-info', (req, res) => res.json(converterInfo()));
-
-// ---- scan trigger (local admin) --------------------------------
-router.post('/scan', (req, res) => {
-  const result = scan({ log: () => {} });
-  res.json(result);
-});
 
 export default router;

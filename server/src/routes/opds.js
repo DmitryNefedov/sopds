@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as repo from '../repo.js';
 import config from '../config.js';
+import { S } from '../settings.js';
 import { mimeFor } from '../files.js';
 import { CONVERTIBLE } from '../convert/index.js';
 
@@ -87,7 +88,7 @@ router.get('/', (req, res) => {
     res,
     feed({
       id: 'sopds:root',
-      title: config.title,
+      title: S.title,
       self: '/opds/',
       entries: [
         navEntry({ id: 'nav:catalogs', title: 'By catalogs', href: '/opds/catalogs', content: `Catalogs: ${s.allcatalogs || 0}, books: ${s.allbooks || 0}` }),

@@ -10,9 +10,10 @@ This repository was **rewritten from Django to a Node.js + React stack**:
 | API      | Django + django-constance  | **Express** (`server/`), ESM, `node:sqlite` |
 | UI       | Django templates + Foundation | **React + Vite + MUI** (`web/`)          |
 | DB       | Django ORM / sqlite3       | plain SQLite (`server/src/schema.sql`)       |
-| Scanner  | `sopds_scanner` mgmt command | `node server/bin/scan.js`                  |
+| Scanner  | `sopds_scanner` mgmt command | `node server/bin/scan.js` + in-app scheduler |
 | OPDS feed| `opds_catalog.feeds`       | `server/src/routes/opds.js` (Atom / OPDS 1.1)|
 | Converters| external `fb2epub`/`fb2mobi`/kindlegen | built-in JS `server/src/convert/`, or Calibre |
+| Admin    | Django admin + django-constance | `/settings` page + `server/src/settings.js` |
 
 The original Django code is kept for reference under [`old/`](old/)
 (`old/opds_catalog/`, `old/sopds/`, `old/sopds_web_backend/`, …); its docs are
@@ -35,6 +36,12 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   read/write); if Calibre's `ebook-convert` is on `PATH` it is used instead for
   higher fidelity. Converted files are cached under `server/data/convert-cache/`.
   Endpoint: `GET /api/books/:id/download?format=epub`.
+- **Settings page** (`/settings`) — the equivalent of the old Django admin /
+  django-constance screen. Edit the book-collection path, file extensions, page
+  size, duplicate hiding, the external converter, etc. at runtime (persisted in
+  the DB, no restart), run a scan on demand, and enable a **cron-scheduled
+  scan** (`server/src/scheduler.js`, minute resolution). Optionally protect it
+  with `SOPDS_ADMIN_TOKEN`.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
 - Light / dark MUI theme.
 
@@ -79,19 +86,28 @@ library into `server/books/`.
 | `GET /api/genres?section=` · `GET /api/genres/:id/books` | genres |
 | `GET /api/catalogs?cat=` | catalog tree |
 | `GET /api/stats` · `GET /api/random` | catalog stats / random pick |
-| `POST /api/scan` | trigger a rescan |
+| `GET/PUT /api/admin/settings` | read / update runtime settings |
+| `GET /api/admin/scan` · `POST /api/admin/scan` | scan status / trigger a rescan |
+| `GET /api/admin/check-path?path=` | validate a directory path |
 | `GET /opds/…` | OPDS 1.1 Atom feed |
 
 ## Configuration
 
-All via env vars (or `server/.env`), see [`server/.env.example`](server/.env.example):
-`PORT`, `SOPDS_DB`, `SOPDS_ROOT_LIB`, `SOPDS_BOOK_EXTENSIONS`, `SOPDS_ZIPSCAN`,
-`SOPDS_MAXITEMS`, `SOPDS_DOUBLES_HIDE`, `SOPDS_TITLE`, `SOPDS_SUBTITLE`.
+Bootstrap values come from env vars (or `server/.env`), see
+[`server/.env.example`](server/.env.example): `PORT`, `SOPDS_DB`,
+`SOPDS_ROOT_LIB`, `SOPDS_CONVERT_CACHE`, `SOPDS_ADMIN_TOKEN`, and the initial
+defaults for the tunables below.
+
+Everything else is edited at runtime on the **`/settings`** page and stored in
+the database (`settings` table): catalog title/subtitle, book collection path,
+file extensions, zip scanning, "remove missing books", scheduled-scan on/off +
+cron expression, items per page, duplicate hiding, cover display, external
+converter command, and download-filename style.
 
 ## Tests
 
 ```bash
-cd server && npm test    # node:test — covers the unified search
+cd server && npm test    # node:test — unified search, conversions, settings/cron
 ```
 
 ## License
