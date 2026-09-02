@@ -7,3 +7,9 @@ db.sqlite3-journal
 .idea/*
 venv
 
+# Node rewrite
+node_modules/
+server/data/
+server/books/
+web/dist/
+.env

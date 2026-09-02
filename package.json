@@ -1,0 +1,23 @@
+{
+  "name": "sopds",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SimpleOPDS catalog server - Node.js + React rewrite",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "scan": "node server/bin/scan.js",
+    "samples": "node server/bin/make-samples.js",
+    "server": "npm --workspace server start",
+    "dev:server": "npm --workspace server run dev",
+    "dev:web": "npm --workspace web run dev",
+    "build": "npm --workspace web run build",
+    "start": "npm run build && npm --workspace server start",
+    "test": "npm --workspace server test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

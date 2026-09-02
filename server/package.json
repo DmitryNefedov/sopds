@@ -1,0 +1,25 @@
+{
+  "name": "sopds-server",
+  "version": "1.0.0",
+  "description": "SimpleOPDS catalog server - Express API (rewrite of the Django sopds backend)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "scan": "node bin/scan.js",
+    "initdb": "node bin/initdb.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "compression": "^1.7.5",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0",
+    "sax": "^1.4.1"
+  }
+}
