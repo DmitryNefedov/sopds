@@ -11,6 +11,7 @@ import {
   nocover,
 } from '../files.js';
 import { scan } from '../scanner.js';
+import { convert, CONVERTIBLE, converterInfo, ConvertError } from '../convert/index.js';
 
 const router = Router();
 
@@ -48,6 +49,13 @@ router.get('/books', (req, res) => {
 router.get('/books/:id', (req, res) => {
   const book = repo.getBook(Number(req.params.id));
   if (!book) return res.status(404).json({ error: 'not found' });
+  // Every book is offered in all download formats; the native one is marked.
+  book.download_formats = config.downloadFormats.map((fmt) => ({
+    format: fmt,
+    native: fmt === book.format,
+    convertible: CONVERTIBLE.includes(book.format) || fmt === book.format,
+    url: `/api/books/${book.id}/download?format=${fmt}`,
+  }));
   res.json(book);
 });
 
@@ -60,21 +68,31 @@ router.get('/books/:id/download', (req, res) => {
   } catch {
     return res.status(404).json({ error: 'file missing' });
   }
+
+  const target = (req.query.format || book.format).toString().toLowerCase();
+  try {
+    if (target !== book.format) {
+      buf = convert(buf, book.format, target, `book:${book.id}`);
+    }
+  } catch (err) {
+    const status = err instanceof ConvertError ? err.status : 500;
+    return res.status(status).json({ error: err.message });
+  }
+
   const base = translitName(book.title);
   if (req.query.zip === '1') {
-    const name = `${base}.${book.format}`;
-    const out = zipWrap(buf, name);
+    const out = zipWrap(buf, `${base}.${target}`);
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${base}.${book.format}.zip"`,
+      `attachment; filename="${base}.${target}.zip"`,
     );
     return res.send(out);
   }
-  res.setHeader('Content-Type', mimeFor(book.format));
+  res.setHeader('Content-Type', mimeFor(target));
   res.setHeader(
     'Content-Disposition',
-    `attachment; filename="${base}.${book.format}"`,
+    `attachment; filename="${base}.${target}"`,
   );
   res.send(buf);
 });
@@ -153,6 +171,7 @@ router.get('/stats', (req, res) => {
   });
 });
 router.get('/random', (req, res) => res.json(repo.randomBook()));
+router.get('/convert-info', (req, res) => res.json(converterInfo()));
 
 // ---- scan trigger (local admin) --------------------------------
 router.post('/scan', (req, res) => {

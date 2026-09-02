@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as repo from '../repo.js';
 import config from '../config.js';
 import { mimeFor } from '../files.js';
+import { CONVERTIBLE } from '../convert/index.js';
 
 // Minimal OPDS 1.1 (Atom) catalog so existing OPDS readers keep working.
 const router = Router();
@@ -51,12 +52,25 @@ function bookEntry(book) {
   const cats = book.genres
     .map((g) => `<category term="${xmlEscape(g.subsection)}"/>`)
     .join('');
+  // Offer the native file plus every format we can convert to.
+  const formats = [
+    book.format,
+    ...config.downloadFormats.filter(
+      (f) => f !== book.format && CONVERTIBLE.includes(book.format),
+    ),
+  ];
+  const acquisition = formats
+    .map(
+      (f) =>
+        `<link rel="http://opds-spec.org/acquisition/open-access" href="/api/books/${book.id}/download?format=${f}" type="${xmlEscape(mimeFor(f))}"/>`,
+    )
+    .join('\n    ');
   return `<entry>
     <id>book:${book.id}</id>
     <title>${xmlEscape(book.title)}</title>
     <updated>${new Date().toISOString()}</updated>
     ${authors}${cats}
-    <link rel="http://opds-spec.org/acquisition" href="/api/books/${book.id}/download" type="${xmlEscape(mimeFor(book.format))}"/>
+    ${acquisition}
     <link rel="http://opds-spec.org/image" href="/api/books/${book.id}/cover" type="image/jpeg"/>
     <content type="text">${xmlEscape(book.annotation || book.title)}</content>
   </entry>`;

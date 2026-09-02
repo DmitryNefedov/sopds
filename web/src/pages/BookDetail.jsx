@@ -9,8 +9,11 @@ import {
   Typography,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { useApi, bookCoverUrl, bookDownloadUrl } from '../api.js';
 import { Async, Crumbs } from '../components/common.jsx';
+
+const ALL_FORMATS = ['fb2', 'epub', 'mobi'];
 
 export default function BookDetail() {
   const { id } = useParams();
@@ -71,18 +74,38 @@ export default function BookDetail() {
                 {book.lang ? ` · ${book.lang}` : ''}
               </Typography>
 
-              <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+              <Typography variant="overline" color="text.secondary">
+                Download
+              </Typography>
+              <Stack direction="row" spacing={1} sx={{ mt: 0.5, flexWrap: 'wrap', gap: 1 }}>
+                {ALL_FORMATS.map((fmt) => {
+                  const native = fmt === book.format;
+                  return (
+                    <Button
+                      key={fmt}
+                      variant={native ? 'contained' : 'outlined'}
+                      startIcon={native ? <DownloadIcon /> : <AutoFixHighIcon />}
+                      href={`${bookDownloadUrl(book.id)}?format=${fmt}`}
+                      title={
+                        native
+                          ? `Original ${fmt.toUpperCase()} file`
+                          : `Convert ${book.format?.toUpperCase()} → ${fmt.toUpperCase()} and download`
+                      }
+                    >
+                      {fmt.toUpperCase()}
+                    </Button>
+                  );
+                })}
                 <Button
-                  variant="contained"
-                  startIcon={<DownloadIcon />}
-                  href={bookDownloadUrl(book.id)}
+                  variant="text"
+                  href={`${bookDownloadUrl(book.id)}?format=${book.format}&zip=1`}
                 >
-                  {book.format?.toUpperCase()}
-                </Button>
-                <Button variant="outlined" href={bookDownloadUrl(book.id, true)}>
                   ZIP
                 </Button>
               </Stack>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                Non-native formats are converted on the fly.
+              </Typography>
 
               {book.annotation && (
                 <>

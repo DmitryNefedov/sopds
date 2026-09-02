@@ -12,6 +12,7 @@ This repository was **rewritten from Django to a Node.js + React stack**:
 | DB       | Django ORM / sqlite3       | plain SQLite (`server/src/schema.sql`)       |
 | Scanner  | `sopds_scanner` mgmt command | `node server/bin/scan.js`                  |
 | OPDS feed| `opds_catalog.feeds`       | `server/src/routes/opds.js` (Atom / OPDS 1.1)|
+| Converters| external `fb2epub`/`fb2mobi`/kindlegen | built-in JS `server/src/convert/`, or Calibre |
 
 The original Django code is kept for reference (`opds_catalog/`, `sopds/`,
 `sopds_web_backend/`, …) and its docs are in
@@ -28,6 +29,12 @@ The original Django code is kept for reference (`opds_catalog/`, `sopds/`,
 - Browse by catalog tree, author, series, genre, or title prefix.
 - Book detail with cover extraction (embedded FB2 / EPUB covers), annotation,
   download (raw or zipped).
+- **On-the-fly format conversion.** Every book is offered as **FB2, EPUB and
+  MOBI** even if only one format is on disk. The server converts between the
+  three natively (`server/src/convert/`, pure JS — FB2⇄EPUB⇄MOBI, PalmDOC MOBI
+  read/write); if Calibre's `ebook-convert` is on `PATH` it is used instead for
+  higher fidelity. Converted files are cached under `server/data/convert-cache/`.
+  Endpoint: `GET /api/books/:id/download?format=epub`.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
 - Light / dark MUI theme.
 
@@ -65,7 +72,8 @@ library into `server/books/`.
 |---|---|
 | `GET /api/search?q=&type=all\|books\|authors\|series&page=` | unified cross-entity search |
 | `GET /api/books?prefix=&lang=&page=` · `GET /api/books/:id` | browse / detail |
-| `GET /api/books/:id/download?zip=1` · `GET /api/books/:id/cover` | file + cover |
+| `GET /api/books/:id/download?format=fb2\|epub\|mobi&zip=1` · `GET /api/books/:id/cover` | file (converted on demand) + cover |
+| `GET /api/convert-info` | which conversion engine is active |
 | `GET /api/authors` · `GET /api/authors/:id/books` | authors |
 | `GET /api/series` · `GET /api/series/:id/books` | series |
 | `GET /api/genres?section=` · `GET /api/genres/:id/books` | genres |

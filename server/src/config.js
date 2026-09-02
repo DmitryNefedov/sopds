@@ -26,6 +26,17 @@ export const config = {
   title: process.env.SOPDS_TITLE || 'SimpleOPDS Catalog',
   subtitle: process.env.SOPDS_SUBTITLE || 'Powered by Node + React',
   rootDir: ROOT,
+  // Formats the UI always offers for download; the server converts on demand.
+  downloadFormats: ['fb2', 'epub', 'mobi'],
+  // Optional external converter (Calibre). When set / found on PATH it is
+  // preferred over the built-in converters. Empty string disables the lookup.
+  ebookConvert:
+    process.env.SOPDS_EBOOK_CONVERT !== undefined
+      ? process.env.SOPDS_EBOOK_CONVERT
+      : 'ebook-convert',
+  convertCacheDir:
+    process.env.SOPDS_CONVERT_CACHE ||
+    path.join(ROOT, 'data', 'convert-cache'),
 };
 
 export default config;

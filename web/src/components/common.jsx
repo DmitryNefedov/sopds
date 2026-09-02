@@ -13,8 +13,9 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-import DownloadIcon from '@mui/icons-material/Download';
 import { bookCoverUrl, bookDownloadUrl } from '../api.js';
+
+const ALL_FORMATS = ['fb2', 'epub', 'mobi'];
 
 export function Loading() {
   return (
@@ -99,15 +100,28 @@ export function BookCard({ book }) {
           )}
         </CardContent>
       </CardActionArea>
-      <Box sx={{ px: 2, pb: 1.5, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-        <Chip size="small" variant="outlined" label={book.format?.toUpperCase()} />
-        <Button
-          size="small"
-          startIcon={<DownloadIcon />}
-          href={bookDownloadUrl(book.id)}
-        >
+      <Box sx={{ px: 1.5, pb: 1.25 }}>
+        <Typography variant="caption" color="text.secondary">
           Download
-        </Button>
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.25 }}>
+          {ALL_FORMATS.map((fmt) => (
+            <Button
+              key={fmt}
+              size="small"
+              variant={fmt === book.format ? 'contained' : 'outlined'}
+              sx={{ minWidth: 0, px: 1, py: 0.25, fontSize: 11, lineHeight: 1.6 }}
+              href={`${bookDownloadUrl(book.id)}?format=${fmt}`}
+              title={
+                fmt === book.format
+                  ? `Original ${fmt.toUpperCase()}`
+                  : `Convert to ${fmt.toUpperCase()}`
+              }
+            >
+              {fmt}
+            </Button>
+          ))}
+        </Box>
       </Box>
     </Card>
   );
