@@ -2,8 +2,11 @@ import fs from 'node:fs';
 import { Router } from 'express';
 import { SETTING_DEFS, getAll, setMany } from '../settings.js';
 import { runScan, scanState } from '../scheduler.js';
+import { watcherState } from '../watcher.js';
 import { converterInfo } from '../convert/index.js';
 import config from '../config.js';
+
+const fullScanState = () => ({ ...scanState(), watch: watcherState() });
 
 const router = Router();
 
@@ -43,7 +46,7 @@ router.get('/settings', (req, res) => {
 router.put('/settings', (req, res) => {
   try {
     const values = setMany(req.body || {});
-    res.json({ values, converter: converterInfo(), scan: scanState() });
+    res.json({ values, converter: converterInfo(), scan: fullScanState() });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message, fields: err.fields || null });
   }
@@ -62,7 +65,7 @@ router.get('/check-path', (req, res) => {
   }
 });
 
-router.get('/scan', (req, res) => res.json(scanState()));
+router.get('/scan', (req, res) => res.json(fullScanState()));
 
 router.post('/scan', async (req, res) => {
   const result = await runScan({ reason: 'manual' });
@@ -75,7 +78,7 @@ router.get('/info', (req, res) => {
     dbPath: config.dbPath,
     convertCacheDir: config.convertCacheDir,
     node: process.version,
-    scan: scanState(),
+    scan: fullScanState(),
   });
 });
 

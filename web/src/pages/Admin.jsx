@@ -85,18 +85,41 @@ function SettingField({ def, value, onChange, error }) {
 
 function ScanPanel({ scan, onScan, scanning }) {
   const last = scan?.last;
+  const watch = scan?.watch;
   return (
     <Card sx={{ mb: 3 }}>
       <CardContent>
         <Stack direction="row" alignItems="center" spacing={2}>
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h6">Library scan</Typography>
-            <Typography variant="body2" color="text.secondary">
-              {scan?.enabled
-                ? `Scheduled: ${scan.cron}`
-                : 'Scheduled scanning is off'}
-              {scan?.running ? ' · running now…' : ''}
-            </Typography>
+            <Stack direction="row" spacing={1} sx={{ mt: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
+              <Chip
+                size="small"
+                variant="outlined"
+                color={scan?.running ? 'warning' : 'default'}
+                label={scan?.running ? 'Scanning now…' : 'Idle'}
+              />
+              <Chip
+                size="small"
+                variant="outlined"
+                color={scan?.enabled ? 'success' : 'default'}
+                label={scan?.enabled ? `Scheduled: ${scan.cron}` : 'No schedule'}
+              />
+              {watch && (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color={watch.watching ? 'success' : 'default'}
+                  label={
+                    watch.watching
+                      ? watch.pending
+                        ? 'Watching · change detected…'
+                        : `Watching ${watch.watchedDirs} folder(s)`
+                      : 'Not watching'
+                  }
+                />
+              )}
+            </Stack>
           </Box>
           <Button
             variant="contained"
@@ -150,6 +173,16 @@ export default function Admin() {
       .catch(setLoadErr);
   };
   useEffect(load, []);
+
+  // Keep the scan / watch status fresh while the page is open.
+  useEffect(() => {
+    const id = setInterval(() => {
+      apiGet('/admin/scan')
+        .then((scan) => setData((d) => (d ? { ...d, scan } : d)))
+        .catch(() => {});
+    }, 4000);
+    return () => clearInterval(id);
+  }, []);
 
   const dirty = useMemo(() => {
     if (!data) return false;

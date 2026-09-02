@@ -39,9 +39,11 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
 - **Settings page** (`/settings`) — the equivalent of the old Django admin /
   django-constance screen. Edit the book-collection path, file extensions, page
   size, duplicate hiding, the external converter, etc. at runtime (persisted in
-  the DB, no restart), run a scan on demand, and enable a **cron-scheduled
-  scan** (`server/src/scheduler.js`, minute resolution). Optionally protect it
-  with `SOPDS_ADMIN_TOKEN`.
+  the DB, no restart). Optionally protect it with `SOPDS_ADMIN_TOKEN`.
+- **Three ways to scan** the collection: on demand from the settings page
+  ("Scan now"), on a **cron schedule** (`server/src/scheduler.js`, minute
+  resolution), and by **watching the folder** (`server/src/watcher.js`) — a
+  debounced rescan a few seconds after files are added, changed or removed.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
 - Light / dark MUI theme.
 
@@ -101,13 +103,13 @@ defaults for the tunables below.
 Everything else is edited at runtime on the **`/settings`** page and stored in
 the database (`settings` table): catalog title/subtitle, book collection path,
 file extensions, zip scanning, "remove missing books", scheduled-scan on/off +
-cron expression, items per page, duplicate hiding, cover display, external
-converter command, and download-filename style.
+cron expression, folder-watch on/off + settle time, items per page, duplicate
+hiding, cover display, external converter command, and download-filename style.
 
 ## Tests
 
 ```bash
-cd server && npm test    # node:test — unified search, conversions, settings/cron
+cd server && npm test    # node:test — search, conversions, settings/cron, folder watch
 ```
 
 ## License

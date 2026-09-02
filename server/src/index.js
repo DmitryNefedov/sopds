@@ -9,6 +9,7 @@ import config from './config.js';
 import { initSchema, updateCounters } from './db.js';
 import { S } from './settings.js';
 import { startScheduler } from './scheduler.js';
+import { startWatcher } from './watcher.js';
 import apiRoutes from './routes/api.js';
 import opdsRoutes from './routes/opds.js';
 import adminRoutes from './routes/admin.js';
@@ -50,5 +51,7 @@ app.listen(config.port, () => {
   console.log(`  book collection: ${S.rootLib}`);
   console.log(`  database:        ${config.dbPath}`);
   startScheduler();
+  startWatcher();
   if (S.scanEnabled) console.log(`  scheduled scan:  ${S.scanCron}`);
+  if (S.watchEnabled) console.log(`  watching:        ${S.rootLib}`);
 });

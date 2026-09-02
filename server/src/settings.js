@@ -35,6 +35,12 @@ export const SETTING_DEFS = [
   { key: 'scanCron', group: 'Scanning', type: 'cron', default: '0 0,12 * * *',
     label: 'Scan schedule (cron)',
     help: 'Five fields: minute hour day-of-month month day-of-week' },
+  { key: 'watchEnabled', group: 'Scanning', type: 'bool', default: false,
+    label: 'Watch the collection folder',
+    help: 'Automatically rescan a few seconds after files are added, changed or removed' },
+  { key: 'watchDebounce', group: 'Scanning', type: 'int', default: 5, min: 1, max: 3600,
+    label: 'Watch settle time (seconds)',
+    help: 'Wait this long after the last change before rescanning' },
 
   // --- Display --------------------------------------------------------
   { key: 'maxItems', group: 'Display', type: 'int', default: config.maxItems,
