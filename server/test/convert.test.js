@@ -9,7 +9,7 @@ import { epubToIr } from '../src/convert/epub.js';
 import { mobiToIr } from '../src/convert/mobi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.resolve(__dirname, '..', '..', 'opds_catalog', 'tests', 'data');
+const DATA = path.join(__dirname, 'fixtures');
 
 const samples = {
   fb2: path.join(DATA, '262001.fb2'),

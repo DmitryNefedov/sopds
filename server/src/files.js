@@ -70,10 +70,6 @@ export function translitName(s) {
 }
 
 export function nocover() {
-  const candidates = [
-    path.join(config.rootDir, '..', 'static', 'images', 'nocover.jpg'),
-    path.join(config.rootDir, 'static', 'nocover.jpg'),
-  ];
-  for (const c of candidates) if (fs.existsSync(c)) return fs.readFileSync(c);
-  return null;
+  const p = path.join(config.rootDir, 'assets', 'nocover.jpg');
+  return fs.existsSync(p) ? fs.readFileSync(p) : null;
 }

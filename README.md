@@ -14,9 +14,9 @@ This repository was **rewritten from Django to a Node.js + React stack**:
 | OPDS feed| `opds_catalog.feeds`       | `server/src/routes/opds.js` (Atom / OPDS 1.1)|
 | Converters| external `fb2epub`/`fb2mobi`/kindlegen | built-in JS `server/src/convert/`, or Calibre |
 
-The original Django code is kept for reference (`opds_catalog/`, `sopds/`,
-`sopds_web_backend/`, …) and its docs are in
-[`docs-legacy-django.md`](docs-legacy-django.md).
+The original Django code is kept for reference under [`old/`](old/)
+(`old/opds_catalog/`, `old/sopds/`, `old/sopds_web_backend/`, …); its docs are
+in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
 
 ## Highlights
 

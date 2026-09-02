@@ -76,13 +76,7 @@ initSchema();
 function seedGenres() {
   const have = db.prepare('SELECT COUNT(*) c FROM genres').get().c;
   if (have > 0) return;
-  const fixturePath = path.join(
-    config.rootDir,
-    '..',
-    'opds_catalog',
-    'fixtures',
-    'genre.json',
-  );
+  const fixturePath = path.join(__dirname, 'genres.json');
   if (!fs.existsSync(fixturePath)) return;
   const rows = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
   const insert = db.prepare(
