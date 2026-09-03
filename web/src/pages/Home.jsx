@@ -58,7 +58,7 @@ export default function Home() {
             </Grid>
             {s.lastscan && (
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                Last scan: {new Date(s.lastscan.replace(' ', 'T') + 'Z').toLocaleString()}
+                Last scan: {new Date(s.lastscan).toLocaleString()}
               </Typography>
             )}
           </>

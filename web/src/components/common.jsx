@@ -84,7 +84,7 @@ export function BookCard({ book }) {
         <Box sx={eink ? { p: 1, pb: 0 } : undefined}>
           <Box
             component="img"
-            src={bookCoverUrl(book.id, eink)}
+            src={bookCoverUrl(book.id)}
             alt=""
             loading="lazy"
             sx={{

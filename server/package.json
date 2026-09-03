@@ -3,13 +3,15 @@
   "version": "1.0.0",
   "description": "SimpleOPDS catalog server - Express API (rewrite of the Django sopds backend)",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "scan": "node bin/scan.js",
-    "initdb": "node bin/initdb.js",
-    "test": "node --test"
+    "build": "tsc",
+    "start": "node dist/src/index.js",
+    "dev": "tsx watch src/index.ts",
+    "scan": "tsx bin/scan.ts",
+    "initdb": "tsx bin/initdb.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "SOPDS_TEST_DB=mem tsx --test \"test/*.test.ts\""
   },
   "engines": {
     "node": ">=20"
@@ -20,6 +22,20 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "morgan": "^1.10.0",
+    "pg": "^8.23.0",
     "sax": "^1.4.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/adm-zip": "^0.5.8",
+    "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
+    "@types/sax": "^1.2.7",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
   }
 }

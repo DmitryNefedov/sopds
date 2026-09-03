@@ -14,7 +14,6 @@ import {
   dismissSuggestion,
   prefersReducedMotion,
 } from './eink.js';
-import { setCoverEink } from './api.js';
 import App from './App.jsx';
 
 export const ColorModeContext = React.createContext({ toggle: () => {} });
@@ -28,7 +27,6 @@ export const EinkContext = React.createContext({
 });
 
 const initial = resolveEink();
-setCoverEink(initial.eink);
 
 function Root() {
   const [mode, setMode] = useState(
@@ -60,7 +58,6 @@ function Root() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-eink', eink ? 'true' : 'false');
-    setCoverEink(eink);
   }, [eink]);
 
   const colorCtx = useMemo(

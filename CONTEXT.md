@@ -1,0 +1,45 @@
+# Domain glossary — SimpleOPDS
+
+Shared vocabulary for the catalog. The server's TypeScript types in
+[`server/src/types.ts`](server/src/types.ts) are the canonical shape of each
+term; this file is the prose.
+
+## Entities
+
+- **Book** — one book file on disk (or one entry inside a `.zip`). Hydrated for
+  the API/OPDS as `Book`: the `books` row plus its `authors`, `genres` and
+  `series`. A **BookRow** is the raw `books` table row before hydration.
+- **Author**, **Series**, **Genre** — many-to-many with Book via the
+  `book_authors` / `book_series` / `book_genres` join tables. In listings they
+  come back as `AuthorListItem` / `SeriesListItem` / `GenreListItem` — the
+  entity plus a `book_count`.
+- **Catalog** — a node in the directory tree of the collection. The scanner
+  makes a synthetic `.` catalog as the browse root. `CatalogChild` is one
+  child directory with its `book_count`; a **Breadcrumb** is one ancestor.
+- **BookMeta** — normalised metadata extracted from a book file by
+  `books/parseBook` (title, authors, genres, series, language). The scanner's
+  input; distinct from the hydrated `Book` that is the API's output.
+- **IR** (`convert/ir.ts`) — the intermediate representation every format
+  converter reads into and writes out of (`fb2 ⇄ epub ⇄ mobi`).
+
+## Operations
+
+- **Unified search** — one query matches a Book by its own title, *any* of its
+  authors, or *any* of its series (`BOOK_MATCH_FROM` in `repo.ts`).
+  `type=all|books|authors|series` on `GET /api/search`.
+- **Scan** — walk the collection, upsert Books/Authors/Series/Genres, mark
+  vanished files unavailable. Runs on demand, on a cron schedule, or on a
+  debounced folder-watch. Produces `ScanStats`.
+- **Hydrate** — turn a `BookRow` into a `Book` by loading its related authors,
+  genres and series (`repo.hydrateBook`).
+- **Page&lt;T&gt;** — a slice of a listing: `items` plus `total` / `page` /
+  `limit` / `pages` / `has_next` / `has_prev`.
+
+## Seams
+
+- **`Query`** (`db.ts`) — the query surface (`get<T>` / `all<T>` / `run` /
+  `tx`). Two adapters behind it: `pg` in production, PGlite (in-process
+  PostgreSQL) under `SOPDS_TEST_DB=mem`. Placeholders are written `?` / `@name`
+  and translated to `$n`.
+- **`Settings`** (`settings.ts`) — runtime-editable config, read synchronously
+  through the `S` accessor off an in-memory cache; written via `setMany`.

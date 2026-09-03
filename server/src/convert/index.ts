@@ -1,0 +1,169 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync, execFileSync } from 'node:child_process';
+import config from '../config.js';
+import { S, onChange } from '../settings.js';
+import { fb2ToIr, irToFb2 } from './fb2.js';
+import { epubToIr, irToEpub } from './epub.js';
+import { mobiToIr, irToMobi } from './mobi.js';
+import type { Ir } from './ir.js';
+
+export const CONVERTIBLE = ['fb2', 'epub', 'mobi'] as const;
+export type ConvertFormat = (typeof CONVERTIBLE)[number];
+
+const TO_IR: Record<ConvertFormat, (buf: Buffer) => Ir> = {
+  fb2: fb2ToIr,
+  epub: epubToIr,
+  mobi: mobiToIr,
+};
+const FROM_IR: Record<ConvertFormat, (ir: Ir) => Buffer> = {
+  fb2: irToFb2Buf,
+  epub: irToEpub,
+  mobi: irToMobi,
+};
+
+function irToFb2Buf(ir: Ir): Buffer {
+  return Buffer.from(irToFb2(ir), 'utf8');
+}
+
+// ---- external converter (Calibre) --------------------------------------
+
+let _externalPath: string | null | undefined;
+onChange((patch) => {
+  if ('ebookConvert' in patch) _externalPath = undefined; // re-probe next call
+});
+function externalConverter(): string | null {
+  if (_externalPath !== undefined) return _externalPath;
+  _externalPath = null;
+  const candidate = S.ebookConvert;
+  if (!candidate) return _externalPath;
+  try {
+    if (candidate.includes('/')) {
+      if (fs.existsSync(candidate)) _externalPath = candidate;
+    } else {
+      const found = execFileSync(
+        process.platform === 'win32' ? 'where' : 'which',
+        [candidate],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      )
+        .toString()
+        .trim()
+        .split('\n')[0];
+      if (found) _externalPath = found;
+    }
+  } catch {
+    _externalPath = null;
+  }
+  return _externalPath;
+}
+
+export interface ConverterInfo {
+  formats: readonly string[];
+  external: string | null;
+  engine: 'calibre' | 'builtin';
+}
+
+export function converterInfo(): ConverterInfo {
+  return {
+    formats: CONVERTIBLE,
+    external: externalConverter() || null,
+    engine: externalConverter() ? 'calibre' : 'builtin',
+  };
+}
+
+function externalConvert(buf: Buffer, from: string, to: string): Buffer | null {
+  const bin = externalConverter();
+  if (!bin) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sopds-conv-'));
+  const inFile = path.join(dir, `in.${from}`);
+  const outFile = path.join(dir, `out.${to}`);
+  try {
+    fs.writeFileSync(inFile, buf);
+    const res = spawnSync(bin, [inFile, outFile], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: 120000,
+    });
+    if (res.status !== 0 || !fs.existsSync(outFile)) {
+      throw new Error(
+        `ebook-convert failed: ${res.stderr ? res.stderr.toString().slice(0, 500) : res.status}`,
+      );
+    }
+    return fs.readFileSync(outFile);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---- cache -----------------------------------------------------------
+
+function cachePath(key: string, to: string): string {
+  fs.mkdirSync(config.convertCacheDir, { recursive: true });
+  return path.join(config.convertCacheDir, `${key}.${to}`);
+}
+
+// ---- public API -----------------------------------------------------
+
+const isConvertible = (f: string): f is ConvertFormat =>
+  (CONVERTIBLE as readonly string[]).includes(f);
+
+// Convert `buf` (a book in `from` format) to `to`. Returns a Buffer.
+// `cacheKey` (optional) enables on-disk caching of the result.
+export function convert(buf: Buffer, from: string, to: string, cacheKey?: string): Buffer {
+  from = String(from || '').toLowerCase();
+  to = String(to || '').toLowerCase();
+  if (from === to) return buf;
+  if (!isConvertible(to)) {
+    throw new ConvertError(`Cannot convert to .${to}`, 400);
+  }
+  if (!isConvertible(from)) {
+    throw new ConvertError(
+      `Cannot convert from .${from} (only ${CONVERTIBLE.join('/')} are supported)`,
+      415,
+    );
+  }
+
+  const key = cacheKey
+    ? crypto.createHash('sha1').update(`${cacheKey}:${from}:${to}:${buf.length}`).digest('hex')
+    : null;
+  if (key) {
+    const p = cachePath(key, to);
+    if (fs.existsSync(p)) return fs.readFileSync(p);
+  }
+
+  let out: Buffer | null = null;
+  try {
+    out = externalConvert(buf, from, to);
+  } catch {
+    out = null; // fall back to built-in
+  }
+  if (!out) {
+    try {
+      const ir = TO_IR[from](buf);
+      out = FROM_IR[to](ir);
+    } catch (err) {
+      throw new ConvertError(
+        `Conversion ${from}->${to} failed: ${(err as Error).message}`,
+        422,
+      );
+    }
+  }
+
+  if (key && out) {
+    try {
+      fs.writeFileSync(cachePath(key, to), out);
+    } catch {
+      /* cache is best-effort */
+    }
+  }
+  return out;
+}
+
+export class ConvertError extends Error {
+  status: number;
+  constructor(message: string, status = 500) {
+    super(message);
+    this.status = status;
+  }
+}

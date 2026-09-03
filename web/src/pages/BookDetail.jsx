@@ -29,7 +29,7 @@ export default function BookDetail() {
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
             <Box
               component="img"
-              src={bookCoverUrl(book.id, eink)}
+              src={bookCoverUrl(book.id)}
               alt=""
               sx={{
                 width: eink ? 200 : 220,

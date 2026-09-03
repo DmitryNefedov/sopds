@@ -1,0 +1,64 @@
+# SimpleOPDS — three services: postgres, api, ui
+#
+# Configure via a .env file next to this one (see .env.example):
+#   SOPDS_BOOKS_DIR   host folder that holds your e-book collection  (default ./books)
+#   SOPDS_PGDATA      postgres data location: a named volume or a host path
+#                                                            (default named volume "sopds-pgdata")
+#   SOPDS_UI_PORT     host port for the web UI                        (default 8080)
+#   SOPDS_OPDS_PORT   host port for the raw API / OPDS feed           (default 8000)
+#   POSTGRES_PASSWORD database password                               (default sopds)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sopds}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sopds}
+      POSTGRES_DB: ${POSTGRES_DB:-sopds}
+    volumes:
+      - "${SOPDS_PGDATA:-sopds-pgdata}:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sopds} -d ${POSTGRES_DB:-sopds}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-sopds}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-sopds}
+      PGDATABASE: ${POSTGRES_DB:-sopds}
+      SOPDS_ROOT_LIB: /books
+      SOPDS_ADMIN_TOKEN: ${SOPDS_ADMIN_TOKEN:-}
+      SOPDS_TITLE: ${SOPDS_TITLE:-SimpleOPDS Catalog}
+      SOPDS_SUBTITLE: ${SOPDS_SUBTITLE:-Powered by Node + React}
+    volumes:
+      # The e-book collection. Change SOPDS_BOOKS_DIR to point anywhere on the host.
+      - "${SOPDS_BOOKS_DIR:-./books}:/books:ro"
+      # Persist the on-disk conversion cache between restarts.
+      - sopds-convert-cache:/app/data
+    ports:
+      # Exposed so OPDS reader apps can hit the feed directly at :8000/opds/
+      - "${SOPDS_OPDS_PORT:-8000}:8000"
+
+  ui:
+    build:
+      context: ./web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${SOPDS_UI_PORT:-8080}:80"
+
+volumes:
+  sopds-pgdata:
+  sopds-convert-cache:

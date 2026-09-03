@@ -26,14 +26,9 @@ export async function apiSend(method, pathAndQuery, body) {
 export const bookDownloadUrl = (id, zip = false) =>
   `${BASE}/api/books/${id}/download${zip ? '?zip=1' : ''}`;
 
-let _eink = false;
-export function setCoverEink(on) {
-  _eink = !!on;
-}
-// `eink` defaults to the last value set via setCoverEink so plain callers
-// still get the right variant; components pass it explicitly for reactivity.
-export const bookCoverUrl = (id, eink = _eink) =>
-  `${BASE}/api/books/${id}/cover${eink ? '?eink=1' : ''}`;
+// The e-ink theme greyscales cover images with a CSS filter, so the URL is
+// the same in every mode.
+export const bookCoverUrl = (id) => `${BASE}/api/books/${id}/cover`;
 
 // Minimal data-fetching hook with request cancellation and a manual `reload`.
 export function useApi(pathAndQuery, deps = []) {

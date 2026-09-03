@@ -4,8 +4,8 @@
 // There is no single reliable signal — some e-ink browsers spoof a normal
 // User-Agent and report a "fast colour display" for every media query. So:
 //   1. explicit override:  ?eink=1 / ?eink=0  or the saved preference
-//   2. confident auto-detect: server hint, (update: slow)/(monochrome),
-//      UA markers, or a strict heuristic  -> switch automatically
+//   2. confident auto-detect: (update: slow)/(monochrome), UA markers, or a
+//      strict heuristic  -> switch automatically
 //   3. soft signals (reduced motion + touch-only + tablet-ish screen)
 //      -> just *suggest* it with a dismissible prompt
 
@@ -22,15 +22,6 @@ const mq = (q) => {
     return false;
   }
 };
-
-// The server sets <html data-eink="server"> when the request headers look
-// like an e-ink reader (e.g. EinkBro's X-Requested-With). Most reliable.
-export function serverSaysEink() {
-  return (
-    typeof document !== 'undefined' &&
-    document.documentElement.getAttribute('data-eink') === 'server'
-  );
-}
 
 export function prefersReducedMotion() {
   return mq('(prefers-reduced-motion: reduce)');
@@ -117,7 +108,7 @@ export function resolveEink() {
   if (stored !== null) return { eink: stored, detected: false, suggest: false };
 
   const detected =
-    serverSaysEink() || mediaSaysEink() || uaSaysEink() || heuristicSaysEink();
+    mediaSaysEink() || uaSaysEink() || heuristicSaysEink();
   if (detected) return { eink: true, detected: true, suggest: false };
 
   // ?einksuggest=1 forces the prompt (for testing / support).
