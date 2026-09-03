@@ -42,7 +42,7 @@ function screenTheme(mode, { reducedMotion } = {}) {
 
 // E-ink theme: pure black on white, no colour coding, no shadows, no
 // animation, sharp edges, larger hit targets. Tuned for slow grayscale
-// displays such as the Lenovo Smart Paper / Onyx Boox / Kindle browsers.
+// displays such as the Lenovo Smart Paper / Onyx Boox.
 function einkTheme() {
   const BLACK = '#000000';
   const NEAR = '#1a1a1a';

@@ -12,7 +12,7 @@ This repository was **rewritten from Django to a Node.js + React stack**:
 | DB       | Django ORM / sqlite3       | plain SQLite (`server/src/schema.sql`)       |
 | Scanner  | `sopds_scanner` mgmt command | `node server/bin/scan.js` + in-app scheduler |
 | OPDS feed| `opds_catalog.feeds`       | `server/src/routes/opds.js` (Atom / OPDS 1.1)|
-| Converters| external `fb2epub`/`fb2mobi`/kindlegen | built-in JS `server/src/convert/`, or Calibre |
+| Converters| external `fb2epub` / `fb2mobi` binaries | built-in JS `server/src/convert/`, or Calibre |
 | Admin    | Django admin + django-constance | `/settings` page + `server/src/settings.js` |
 
 The original Django code is kept for reference under [`old/`](old/)
@@ -49,14 +49,10 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   resolution), and by **watching the folder** (`server/src/watcher.js`) — a
   debounced rescan a few seconds after files are added, changed or removed.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
-- **Lite mode** (`/lite`) — a no-JavaScript, server-rendered catalog for
-  browsers that can't run the SPA: the Kindle "experimental browser", other
-  ancient WebKit/IE, feature phones. Auto-served to them (redirect from `/`);
-  everyone can force it with `?lite=1` and leave with the "full site" link.
 - Light / dark MUI theme, plus an **e-ink mode** for e-readers (Lenovo Smart
-  Paper, Onyx Boox, Kindle browser, …). Auto-detected from the request headers
-  server-side (the WebView `X-Requested-With` package — e.g. EinkBro — and the
-  User-Agent; the server then stamps `<html data-eink="server">`), plus
+  Paper, Onyx Boox, …). Auto-detected from the request headers server-side (the
+  WebView `X-Requested-With` package — e.g. EinkBro — and the User-Agent; the
+  server then stamps `<html data-eink="server">`), plus
   client-side `(update: slow)` / `(monochrome)` media queries and a strict
   reduced-motion heuristic. Browsers that give no reliable signal (e.g. Firefox
   on the same reader) instead get a one-tap **"switch to e-ink mode?"** prompt
@@ -118,7 +114,6 @@ library into `server/books/`.
 | `GET /api/admin/scan` · `POST /api/admin/scan` | scan status / trigger a rescan |
 | `GET /api/admin/check-path?path=` | validate a directory path |
 | `GET /opds/…` | OPDS 1.1 Atom feed |
-| `GET /lite/…` | no-JS server-rendered catalog |
 | `GET /debug` · `GET /debug/headers` | device / request inspection |
 
 ## Configuration

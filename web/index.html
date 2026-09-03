@@ -4,48 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SimpleOPDS Catalog</title>
-    <script>
-      /* Browsers that can't run the app bundle (Kindle experimental browser,
-         other pre-2020 engines) are sent to the no-JS catalog at /lite.
-         This is a classic ES3 script; the modern syntax is only inside the
-         string passed to new Function(), so parsing it can't crash. */
-      (function () {
-        var ok = true;
-        try {
-          /* native ES modules (the bundle is served as <script type=module>) */
-          if (!('noModule' in document.createElement('script'))) ok = false;
-          /* ES2020 syntax the bundle uses; the string only parses on engines
-             that understand optional chaining / nullish coalescing */
-          new Function('var o = {}; return o?.a ?? [].flat?.();')();
-          /* ES2020 built-ins the bundle / React 18 rely on */
-          if (
-            typeof Promise === 'undefined' ||
-            typeof Symbol === 'undefined' ||
-            typeof globalThis === 'undefined' ||
-            !Promise.allSettled ||
-            !Object.fromEntries ||
-            !Array.prototype.flat
-          ) {
-            ok = false;
-          }
-        } catch (e) {
-          ok = false;
-        }
-        if (!ok && location.pathname.indexOf('/lite') !== 0) {
-          location.replace('/lite');
-        }
-      })();
-    </script>
-    <noscript><meta http-equiv="refresh" content="0; url=/lite" /></noscript>
   </head>
   <body>
     <div id="root"></div>
-    <noscript>
-      <p style="font:18px serif;padding:16px">
-        This catalog needs JavaScript.
-        <a href="/lite">Open the lite version</a>.
-      </p>
-    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

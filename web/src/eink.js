@@ -1,5 +1,5 @@
 // Decide whether to render the e-ink UI (Lenovo Smart Paper, Onyx Boox,
-// Kindle/Kobo browsers, …).
+// Kobo browsers, …).
 //
 // There is no single reliable signal — some e-ink browsers spoof a normal
 // User-Agent and report a "fast colour display" for every media query. So:
@@ -13,7 +13,7 @@ const STORAGE_KEY = 'sopds-eink';
 const SUGGEST_DISMISS_KEY = 'sopds-eink-suggest-dismissed';
 
 const UA_MARKERS =
-  /\b(e-?ink|eink|epaper|e-?paper)\b|onyx|boox|remarkable|dasung|meebme|meebook|bigme|pocketbook|\bkobo\b|kindle|silk|hisense.*(a5|a7|a9)|lenovo.*(smart\s?paper|tb[0-9]{3,}|zac[0-9])/i;
+  /\b(e-?ink|eink|epaper|e-?paper)\b|onyx|boox|remarkable|dasung|meebme|meebook|bigme|pocketbook|\bkobo\b|hisense.*(a5|a7|a9)|lenovo.*(smart\s?paper|tb[0-9]{3,}|zac[0-9])/i;
 
 const mq = (q) => {
   try {

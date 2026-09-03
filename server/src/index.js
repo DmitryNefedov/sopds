@@ -15,8 +15,7 @@ import apiRoutes from './routes/api.js';
 import opdsRoutes from './routes/opds.js';
 import adminRoutes from './routes/admin.js';
 import { requestLogger, debugRouter } from './debug.js';
-import { einkSignals, wantsLiteUi } from './eink-detect.js';
-import liteRouter from './routes/lite.js';
+import { einkSignals } from './eink-detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +30,6 @@ app.use(express.json());
 app.use(requestLogger);
 
 app.use('/debug', debugRouter);
-app.use('/lite', liteRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api', apiRoutes);
 app.use('/opds', opdsRoutes);
@@ -68,20 +66,9 @@ if (fs.existsSync(webDist)) {
     if (
       req.path.startsWith('/api') ||
       req.path.startsWith('/opds') ||
-      req.path.startsWith('/debug') ||
-      req.path.startsWith('/lite')
+      req.path.startsWith('/debug')
     )
       return next();
-    // Remember an explicit lite choice.
-    if (req.query.lite === '1' || req.query.lite === '0') {
-      res.cookie('lite', req.query.lite, {
-        maxAge: 31536000000,
-        httpOnly: true,
-        sameSite: 'lax',
-      });
-    }
-    // Send browsers that can't run the SPA to the server-rendered catalog.
-    if (wantsLiteUi(req)) return res.redirect(302, '/lite');
     sendApp(req, res);
   });
 }
@@ -112,7 +99,6 @@ app.listen(config.port, config.host, () => {
   }
   console.log(`  book collection: ${S.rootLib}`);
   console.log(`  database:        ${config.dbPath}`);
-  console.log(`  lite UI:         /lite  (auto-served to Kindle / ancient browsers)`);
   if (process.env.SOPDS_LOG_REQUESTS !== '0') {
     console.log(
       `  request logging: ON — open  /debug  on the device to capture its browser details`,
