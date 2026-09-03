@@ -17,7 +17,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sopds}
       POSTGRES_DB: ${POSTGRES_DB:-sopds}
     volumes:
-      - "${SOPDS_PGDATA:-sopds-pgdata}:/var/lib/postgresql/data"
+      - "/mnt/data/portainer_nb/volumes/ebooks/postgres:/var/lib/postgresql/data"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sopds} -d ${POSTGRES_DB:-sopds}"]
       interval: 5s
@@ -28,6 +28,7 @@ services:
     build:
       context: ./server
     restart: unless-stopped
+    cpus: 16
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +44,7 @@ services:
       SOPDS_SUBTITLE: ${SOPDS_SUBTITLE:-Powered by Node + React}
     volumes:
       # The e-book collection. Change SOPDS_BOOKS_DIR to point anywhere on the host.
-      - "${SOPDS_BOOKS_DIR:-./books}:/books:ro"
+      - "/mnt/tor/torrentstwo/books:/books:ro"
       # Persist the on-disk conversion cache between restarts.
       - sopds-convert-cache:/app/data
     ports:
@@ -65,7 +66,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${SOPDS_UI_PORT:-8080}:80"
+      - "${SOPDS_UI_PORT:-8989}:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:80/health || exit 1"]
       interval: 10s
