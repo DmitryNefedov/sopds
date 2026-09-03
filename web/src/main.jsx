@@ -7,7 +7,13 @@ import '@fontsource/roboto/400.css';
 import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { buildTheme } from './theme.js';
-import { resolveEink, setEinkPref, mediaSaysEink } from './eink.js';
+import {
+  resolveEink,
+  setEinkPref,
+  mediaSaysEink,
+  dismissSuggestion,
+  prefersReducedMotion,
+} from './eink.js';
 import { setCoverEink } from './api.js';
 import App from './App.jsx';
 
@@ -15,7 +21,10 @@ export const ColorModeContext = React.createContext({ toggle: () => {} });
 export const EinkContext = React.createContext({
   eink: false,
   detected: false,
+  suggest: false,
+  reducedMotion: false,
   toggle: () => {},
+  dismissSuggest: () => {},
 });
 
 const initial = resolveEink();
@@ -26,6 +35,8 @@ function Root() {
     () => localStorage.getItem('sopds-mode') || 'light',
   );
   const [eink, setEink] = useState(initial.eink);
+  const [suggest, setSuggest] = useState(initial.suggest);
+  const reducedMotion = useMemo(() => prefersReducedMotion(), []);
 
   // React to a device that starts reporting (update: slow) after load.
   useEffect(() => {
@@ -42,7 +53,10 @@ function Root() {
       mqls.forEach((m) => m.removeEventListener?.('change', onChange));
   }, []);
 
-  const theme = useMemo(() => buildTheme(mode, eink), [mode, eink]);
+  const theme = useMemo(
+    () => buildTheme(mode, eink, { reducedMotion }),
+    [mode, eink, reducedMotion],
+  );
 
   useEffect(() => {
     document.documentElement.setAttribute('data-eink', eink ? 'true' : 'false');
@@ -66,13 +80,25 @@ function Root() {
     () => ({
       eink,
       detected: initial.detected,
+      suggest,
+      reducedMotion,
       toggle: () =>
         setEink((v) => {
           setEinkPref(!v);
+          setSuggest(false);
           return !v;
         }),
+      acceptSuggest: () => {
+        setEinkPref(true);
+        setEink(true);
+        setSuggest(false);
+      },
+      dismissSuggest: () => {
+        dismissSuggestion();
+        setSuggest(false);
+      },
     }),
-    [eink],
+    [eink, suggest, reducedMotion],
   );
 
   return (

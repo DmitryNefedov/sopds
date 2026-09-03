@@ -1,12 +1,16 @@
-// Detect e-ink / e-paper devices (Lenovo Smart Paper, Onyx Boox, Kindle,
-// Kobo, reMarkable, PocketBook, Dasung, Bigme, Hisense ink phones, …).
+// Decide whether to render the e-ink UI (Lenovo Smart Paper, Onyx Boox,
+// Kindle/Kobo browsers, …).
 //
-// Priority:
-//   1. explicit override  ?eink=1 / ?eink=0  or the stored preference
-//   2. CSS Media Queries L4 hints: (update: slow) and (monochrome)
-//   3. user-agent markers
+// There is no single reliable signal — some e-ink browsers spoof a normal
+// User-Agent and report a "fast colour display" for every media query. So:
+//   1. explicit override:  ?eink=1 / ?eink=0  or the saved preference
+//   2. confident auto-detect: server hint, (update: slow)/(monochrome),
+//      UA markers, or a strict heuristic  -> switch automatically
+//   3. soft signals (reduced motion + touch-only + tablet-ish screen)
+//      -> just *suggest* it with a dismissible prompt
 
 const STORAGE_KEY = 'sopds-eink';
+const SUGGEST_DISMISS_KEY = 'sopds-eink-suggest-dismissed';
 
 const UA_MARKERS =
   /\b(e-?ink|eink|epaper|e-?paper)\b|onyx|boox|remarkable|dasung|meebme|meebook|bigme|pocketbook|\bkobo\b|kindle|silk|hisense.*(a5|a7|a9)|lenovo.*(smart\s?paper|tb[0-9]{3,}|zac[0-9])/i;
@@ -28,29 +32,43 @@ export function serverSaysEink() {
   );
 }
 
+export function prefersReducedMotion() {
+  return mq('(prefers-reduced-motion: reduce)');
+}
+
 export function mediaSaysEink() {
   // (update: slow) is the spec-blessed e-ink signal; (monochrome) catches
   // grayscale panels that still report a fast-ish refresh.
   return mq('(update: slow)') || mq('(monochrome)');
 }
 
-// Fallback heuristic for e-ink Android browsers that spoof a generic UA and
-// implement none of the update/monochrome features (old Chromium): a
-// touch-only device with reduced motion that does NOT report a fast display.
-export function heuristicSaysEink() {
-  const oldChromium = /Chrome\/(\d{1,2}|10[0-4])\./.test(navigator.userAgent || '');
+export function uaSaysEink() {
+  return UA_MARKERS.test((navigator && navigator.userAgent) || '');
+}
+
+// Touch-only device, no hover, animations already suppressed system-wide,
+// and a screen the shape/size of an e-reader rather than a phone.
+function softEinkSignals() {
+  const w = window.screen ? window.screen.width : window.innerWidth;
+  const h = window.screen ? window.screen.height : window.innerHeight;
+  const short = Math.min(w, h);
+  const ratio = short / Math.max(w, h);
+  const tabletShaped = short >= 600 && ratio >= 0.6; // ~3:4..1:1, not a phone
   return (
-    mq('(prefers-reduced-motion: reduce)') &&
+    prefersReducedMotion() &&
     mq('(hover: none)') &&
     mq('(pointer: coarse)') &&
-    !mq('(update: fast)') &&
-    oldChromium
+    tabletShaped
   );
 }
 
-export function uaSaysEink() {
-  if (typeof navigator === 'undefined') return false;
-  return UA_MARKERS.test(navigator.userAgent || '');
+// Confident enough to switch without asking: old-Chromium e-ink browsers that
+// report nothing useful, on touch-only hardware with motion suppressed.
+export function heuristicSaysEink() {
+  const oldChromium = /Chrome\/(\d{1,2}|10[0-4])\./.test(
+    (navigator && navigator.userAgent) || '',
+  );
+  return oldChromium && !mq('(update: fast)') && softEinkSignals();
 }
 
 export function storedEinkPref() {
@@ -71,18 +89,40 @@ export function setEinkPref(value) {
   }
 }
 
-// Resolve the initial e-ink state and whether it was auto-detected.
+export function suggestionDismissed() {
+  try {
+    return localStorage.getItem(SUGGEST_DISMISS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+export function dismissSuggestion() {
+  try {
+    localStorage.setItem(SUGGEST_DISMISS_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+// Resolve the initial e-ink state, whether it was auto-detected, and whether
+// we should offer a "switch to e-ink?" prompt.
 export function resolveEink() {
   const params = new URLSearchParams(window.location.search);
   if (params.has('eink')) {
     const forced = params.get('eink') !== '0';
     setEinkPref(forced);
-    return { eink: forced, detected: false };
+    return { eink: forced, detected: false, suggest: false };
   }
   const stored = storedEinkPref();
-  if (stored !== null) return { eink: stored, detected: false };
+  if (stored !== null) return { eink: stored, detected: false, suggest: false };
 
   const detected =
     serverSaysEink() || mediaSaysEink() || uaSaysEink() || heuristicSaysEink();
-  return { eink: detected, detected };
+  if (detected) return { eink: true, detected: true, suggest: false };
+
+  // ?einksuggest=1 forces the prompt (for testing / support).
+  const suggest =
+    (params.get('einksuggest') === '1' ||
+      (softEinkSignals() && !suggestionDismissed()));
+  return { eink: false, detected: false, suggest };
 }

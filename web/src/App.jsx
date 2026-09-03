@@ -7,8 +7,10 @@ import {
   useLocation,
 } from 'react-router-dom';
 import {
+  Alert,
   AppBar,
   Box,
+  Button,
   Container,
   Drawer,
   IconButton,
@@ -17,6 +19,7 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Snackbar,
   Toolbar,
   Tooltip,
   Typography,
@@ -206,6 +209,29 @@ export default function App() {
           </Routes>
         </Container>
       </Box>
+
+      <Snackbar
+        open={!eink && !!einkCtx.suggest}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity="info"
+          variant="filled"
+          sx={{ alignItems: 'center' }}
+          action={
+            <>
+              <Button color="inherit" size="small" onClick={einkCtx.acceptSuggest}>
+                Enable
+              </Button>
+              <Button color="inherit" size="small" onClick={einkCtx.dismissSuggest}>
+                No thanks
+              </Button>
+            </>
+          }
+        >
+          This looks like an e-reader — switch to e-ink mode?
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

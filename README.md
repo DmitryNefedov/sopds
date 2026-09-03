@@ -53,9 +53,13 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   Paper, Onyx Boox, Kindle browser, …). Auto-detected from the request headers
   server-side (the WebView `X-Requested-With` package — e.g. EinkBro — and the
   User-Agent; the server then stamps `<html data-eink="server">`), plus
-  client-side `(update: slow)` / `(monochrome)` media queries and a
-  reduced-motion heuristic. Manual toggle in the top bar and on `/settings`
-  (also `?eink=1`). It forces pure black-on-white,
+  client-side `(update: slow)` / `(monochrome)` media queries and a strict
+  reduced-motion heuristic. Browsers that give no reliable signal (e.g. Firefox
+  on the same reader) instead get a one-tap **"switch to e-ink mode?"** prompt
+  when the soft signals line up (reduced motion + touch-only + reader-shaped
+  screen). Manual toggle in the top bar and on `/settings` (also `?eink=1`); the
+  choice is saved per device. `prefers-reduced-motion` also disables animations
+  in the normal colour theme. It forces pure black-on-white,
   kills animations/transitions, squares off corners, enlarges hit targets, and
   serves a high-contrast grayscale "no cover" placeholder. The choice is stored
   per device.

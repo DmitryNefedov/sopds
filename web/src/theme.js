@@ -1,7 +1,16 @@
 import { createTheme } from '@mui/material/styles';
 
+const NO_MOTION = {
+  '*, *::before, *::after': {
+    transitionDuration: '0.01ms !important',
+    animationDuration: '0.01ms !important',
+    animationIterationCount: '1 !important',
+    scrollBehavior: 'auto !important',
+  },
+};
+
 // Standard (LCD/OLED) theme.
-function screenTheme(mode) {
+function screenTheme(mode, { reducedMotion } = {}) {
   return createTheme({
     palette: {
       mode,
@@ -21,6 +30,12 @@ function screenTheme(mode) {
     components: {
       MuiCard: { defaultProps: { variant: 'outlined' } },
       MuiButton: { defaultProps: { disableElevation: true } },
+      ...(reducedMotion
+        ? {
+            MuiCssBaseline: { styleOverrides: NO_MOTION },
+            MuiButtonBase: { defaultProps: { disableRipple: true } },
+          }
+        : {}),
     },
   });
 }
@@ -147,6 +162,6 @@ function einkTheme() {
   });
 }
 
-export function buildTheme(mode, eink) {
-  return eink ? einkTheme() : screenTheme(mode);
+export function buildTheme(mode, eink, opts = {}) {
+  return eink ? einkTheme() : screenTheme(mode, opts);
 }
