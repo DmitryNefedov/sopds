@@ -14,6 +14,7 @@ import { startWatcher } from './watcher.js';
 import apiRoutes from './routes/api.js';
 import opdsRoutes from './routes/opds.js';
 import adminRoutes from './routes/admin.js';
+import { requestLogger, debugRouter } from './debug.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +26,9 @@ app.use(compression());
 app.use(cors());
 app.use(morgan('tiny'));
 app.use(express.json());
+app.use(requestLogger);
 
+app.use('/debug', debugRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api', apiRoutes);
 app.use('/opds', opdsRoutes);
@@ -37,7 +40,12 @@ const webDist = path.resolve(__dirname, '..', '..', 'web', 'dist');
 if (fs.existsSync(webDist)) {
   app.use(express.static(webDist));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/opds')) return next();
+    if (
+      req.path.startsWith('/api') ||
+      req.path.startsWith('/opds') ||
+      req.path.startsWith('/debug')
+    )
+      return next();
     res.sendFile(path.join(webDist, 'index.html'));
   });
 }
@@ -68,6 +76,11 @@ app.listen(config.port, config.host, () => {
   }
   console.log(`  book collection: ${S.rootLib}`);
   console.log(`  database:        ${config.dbPath}`);
+  if (process.env.SOPDS_LOG_REQUESTS !== '0') {
+    console.log(
+      `  request logging: ON — open  /debug  on the device to capture its browser details`,
+    );
+  }
   startScheduler();
   startWatcher();
   if (S.scanEnabled) console.log(`  scheduled scan:  ${S.scanCron}`);
