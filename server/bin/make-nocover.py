@@ -2,7 +2,7 @@
 """Regenerate the default book-cover placeholders.
 
   python3 bin/make-nocover.py          -> assets/nocover.png       (colour)
-  python3 bin/make-nocover.py --eink   -> assets/nocover-eink.png  (1-bit, e-ink)
+  python3 bin/make-nocover.py --eink   -> assets/nocover-eink.png  (grayscale)
 
 The matching SVGs in assets/ are the source of truth for the design.
 """
@@ -17,9 +17,11 @@ SS = 3
 w, h = W * SS, H * SS
 
 if EINK:
-    BG = (255, 255, 255)
-    INK = (0, 0, 0)
-    img = Image.new("RGB", (w, h), BG)
+    # a light card on a slightly darker ground, matching the e-ink theme
+    img = Image.new("RGB", (w, h), (244, 244, 244))
+    ImageDraw.Draw(img).rounded_rectangle(
+        [10 * SS, 10 * SS, w - 10 * SS, h - 10 * SS],
+        radius=18 * SS, fill=(255, 255, 255))
 else:
     img = Image.new("RGB", (w, h))
     px = img.load()
@@ -32,15 +34,15 @@ else:
 
 d = ImageDraw.Draw(img, "RGBA")
 
-border_col = (0, 0, 0, 255) if EINK else (255, 255, 255, 36)
+border_col = (154, 154, 154, 255) if EINK else (255, 255, 255, 36)
 m = 26 * SS
-d.rounded_rectangle([m, m, w - m, h - m], radius=(0 if EINK else 10 * SS),
-                    outline=border_col, width=(4 if EINK else 2) * SS)
+d.rounded_rectangle([m, m, w - m, h - m], radius=(14 if EINK else 10) * SS,
+                    outline=border_col, width=2 * SS)
 
 # open-book glyph
 cx, cy = w // 2, int(h * 0.42)
-lw = (8 if EINK else 6) * SS
-col = (0, 0, 0, 255) if EINK else (203, 212, 227, 225)
+lw = (7 if EINK else 6) * SS
+col = (90, 90, 90, 255) if EINK else (203, 212, 227, 225)
 outer, gap, sag = 84 * SS, 9 * SS, 12 * SS
 top_y, bot_y = cy - 66 * SS, cy + 66 * SS
 d.line([(cx - gap, top_y), (cx - gap, bot_y)], fill=col, width=lw)
@@ -74,8 +76,8 @@ def spaced(draw, text, y, size, fill, tracking):
         x += cw + tracking
 
 
-main = (0, 0, 0, 255) if EINK else (231, 236, 245, 235)
-sub = (0, 0, 0, 255) if EINK else (231, 236, 245, 120)
+main = (51, 51, 51, 255) if EINK else (231, 236, 245, 235)
+sub = (128, 128, 128, 255) if EINK else (231, 236, 245, 120)
 spaced(d, "NO COVER", int(h * 0.68), 32 * SS, main, 6 * SS)
 spaced(d, "SimpleOPDS", int(h * 0.68) + 48 * SS, 15 * SS, sub, 2 * SS)
 

@@ -34,11 +34,11 @@ export default function BookDetail() {
               sx={{
                 width: eink ? 200 : 220,
                 maxWidth: '100%',
-                borderRadius: eink ? 0 : 2,
-                border: eink ? '1.5px solid' : 'none',
+                borderRadius: 2,
+                border: eink ? '1px solid' : 'none',
                 borderColor: 'divider',
-                bgcolor: 'action.hover',
-                filter: eink ? 'grayscale(1) contrast(1.15)' : 'none',
+                bgcolor: eink ? 'grey.300' : 'action.hover',
+                filter: eink ? 'grayscale(1) contrast(1.06)' : 'none',
                 alignSelf: { xs: 'center', sm: 'flex-start' },
               }}
             />

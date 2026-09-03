@@ -81,22 +81,25 @@ export function BookCard({ book }) {
         to={`/books/${book.id}`}
         sx={{ flexGrow: 1 }}
       >
-        <Box
-          component="img"
-          src={bookCoverUrl(book.id, eink)}
-          alt=""
-          loading="lazy"
-          sx={{
-            display: 'block',
-            width: '100%',
-            aspectRatio: '2 / 3',
-            objectFit: 'cover',
-            bgcolor: 'action.hover',
-            borderBottom: eink ? '1.5px solid' : 'none',
-            borderColor: 'divider',
-            filter: eink ? 'grayscale(1) contrast(1.15)' : 'none',
-          }}
-        />
+        <Box sx={eink ? { p: 1, pb: 0 } : undefined}>
+          <Box
+            component="img"
+            src={bookCoverUrl(book.id, eink)}
+            alt=""
+            loading="lazy"
+            sx={{
+              display: 'block',
+              width: '100%',
+              aspectRatio: '2 / 3',
+              objectFit: 'cover',
+              bgcolor: eink ? 'grey.300' : 'action.hover',
+              border: eink ? '1px solid' : 'none',
+              borderColor: 'divider',
+              borderRadius: eink ? 1.5 : 0,
+              filter: eink ? 'grayscale(1) contrast(1.06)' : 'none',
+            }}
+          />
+        </Box>
         <CardContent sx={{ pb: 1 }}>
           <Typography
             variant="subtitle2"

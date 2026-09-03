@@ -59,10 +59,10 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   when the soft signals line up (reduced motion + touch-only + reader-shaped
   screen). Manual toggle in the top bar and on `/settings` (also `?eink=1`); the
   choice is saved per device. `prefers-reduced-motion` also disables animations
-  in the normal colour theme. It forces pure black-on-white,
-  kills animations/transitions, squares off corners, enlarges hit targets, and
-  serves a high-contrast grayscale "no cover" placeholder. The choice is stored
-  per device.
+  in the normal colour theme. The e-ink theme is a refined grayscale design —
+  layered gray tones, light borders and rounded corners (no colour, no
+  animation, no shadows), larger hit targets, grayscaled covers and a matching
+  grayscale "no cover" placeholder.
 
 ## Quick start
 

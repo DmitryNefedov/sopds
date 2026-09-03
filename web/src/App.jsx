@@ -74,11 +74,11 @@ function SearchField({ eink }) {
       }}
       sx={{
         position: 'relative',
-        borderRadius: eink ? 0 : 2,
-        border: eink ? `2px solid ${theme.palette.text.primary}` : 'none',
+        borderRadius: 2,
+        border: eink ? `1.5px solid ${theme.palette.grey[500]}` : 'none',
         bgcolor: eink ? 'background.paper' : alpha(theme.palette.common.white, 0.15),
         '&:hover': eink
-          ? {}
+          ? { borderColor: theme.palette.text.secondary }
           : { bgcolor: alpha(theme.palette.common.white, 0.25) },
         ml: { xs: 1, sm: 3 },
         flexGrow: 1,
@@ -158,7 +158,16 @@ export default function App() {
               color="inherit"
               onClick={einkCtx.toggle}
               aria-pressed={eink}
-              sx={eink ? { outline: '2px solid currentColor' } : undefined}
+              sx={
+                eink
+                  ? {
+                      borderRadius: 2,
+                      bgcolor: 'action.selected',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                    }
+                  : undefined
+              }
             >
               <ChromeReaderModeIcon />
             </IconButton>
