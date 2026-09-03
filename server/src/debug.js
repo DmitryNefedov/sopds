@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { einkSignals } from './eink-detect.js';
+import { einkSignals, wantsLiteUi } from './eink-detect.js';
 
 // Verbose request logging + a self-reporting client-inspection page, used to
 // work out how to detect a particular device (e-ink readers etc.).
@@ -57,6 +57,7 @@ debugRouter.get('/headers', (req, res) => {
     url: req.originalUrl,
     headers: req.headers,
     einkDetected: einkSignals(req),
+    wantsLiteUi: wantsLiteUi(req),
   });
 });
 

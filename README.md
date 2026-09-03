@@ -49,6 +49,10 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   resolution), and by **watching the folder** (`server/src/watcher.js`) — a
   debounced rescan a few seconds after files are added, changed or removed.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
+- **Lite mode** (`/lite`) — a no-JavaScript, server-rendered catalog for
+  browsers that can't run the SPA: the Kindle "experimental browser", other
+  ancient WebKit/IE, feature phones. Auto-served to them (redirect from `/`);
+  everyone can force it with `?lite=1` and leave with the "full site" link.
 - Light / dark MUI theme, plus an **e-ink mode** for e-readers (Lenovo Smart
   Paper, Onyx Boox, Kindle browser, …). Auto-detected from the request headers
   server-side (the WebView `X-Requested-With` package — e.g. EinkBro — and the
@@ -114,6 +118,8 @@ library into `server/books/`.
 | `GET /api/admin/scan` · `POST /api/admin/scan` | scan status / trigger a rescan |
 | `GET /api/admin/check-path?path=` | validate a directory path |
 | `GET /opds/…` | OPDS 1.1 Atom feed |
+| `GET /lite/…` | no-JS server-rendered catalog |
+| `GET /debug` · `GET /debug/headers` | device / request inspection |
 
 ## Configuration
 
