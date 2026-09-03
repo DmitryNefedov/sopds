@@ -13,7 +13,7 @@ interface ManifestItem {
 
 // EPUB metadata + cover extraction. Ported from book_tools/format/epub.py.
 // The accumulator is deliberately loose — this is a lenient best-effort parser.
-export function parseEpub(buf: Buffer): RawMeta {
+export function parseEpub(buf: Buffer, { metaOnly = false }: { metaOnly?: boolean } = {}): RawMeta {
   const meta: Record<string, any> = {
     title: '',
     authors: [],
@@ -127,7 +127,7 @@ export function parseEpub(buf: Buffer): RawMeta {
     coverItem = images.find((i) => /cover/i.test(i.id || '') || /cover/i.test(i.href || ''));
   if (!coverItem) coverItem = images[0];
 
-  if (coverItem && coverItem.href) {
+  if (!metaOnly && coverItem && coverItem.href) {
     const candidates = [resolve(coverItem.href), coverItem.href, `OEBPS/${coverItem.href}`];
     for (const c of candidates) {
       const entry = zip.getEntry(c);

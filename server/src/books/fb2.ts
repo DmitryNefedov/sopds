@@ -22,6 +22,47 @@ export function decodeXmlBuffer(buf: Buffer): string {
 
 const IMAGE_MIME = /^image\//i;
 
+// FB2 puts every field we index inside the leading <description> element; the
+// rest of the file is the body text and the base64 <binary> blobs (a cover is
+// commonly 100-300 KB of base64). During a scan we want none of that, so
+// `fb2Head` clips the buffer right after </description>. That turns a ~500 KB
+// parse into a ~3 KB one — the single biggest win in the collection walk.
+const DESC_END = '</description>';
+
+/** The `</description>` marker as bytes in the buffer's own encoding. */
+function descEndMarker(buf: Buffer): Buffer {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return Buffer.from(DESC_END, 'utf16le');
+  if (buf[0] === 0xfe && buf[1] === 0xff) return Buffer.from(Buffer.from(DESC_END, 'utf16le').swap16());
+  // utf-8, ascii and every single-byte codepage (windows-1251, koi8-r, …)
+  // spell an ASCII tag the same way.
+  return Buffer.from(DESC_END, 'latin1');
+}
+
+/**
+ * The prefix of an FB2 file up to and including `</description>`, or the whole
+ * buffer when the marker is absent (truncated or malformed file). The result
+ * is not well-formed XML, which is fine: the parser below is deliberately
+ * lenient and stops caring after </description> anyway.
+ */
+export function fb2Head(buf: Buffer): Buffer {
+  const marker = descEndMarker(buf);
+  const i = buf.indexOf(marker);
+  return i < 0 ? buf : buf.subarray(0, i + marker.length);
+}
+
+/** How many bytes of an FB2 file the scanner reads to find `</description>`. */
+export const FB2_HEAD_LIMIT = 256 * 1024;
+export const FB2_HEAD_MARKER = Buffer.from(DESC_END, 'latin1');
+
+export interface Fb2Options {
+  /**
+   * Skip the cover: clip the buffer at `</description>` and never accumulate
+   * or base64-decode a `<binary>`. Used by the scanner, which stores no cover
+   * bytes — `extractCover` re-reads the file when a cover is actually asked for.
+   */
+  metaOnly?: boolean;
+}
+
 interface Fb2Work extends RawMeta {
   coverId?: string | null;
   coverMime?: string;
@@ -37,7 +78,8 @@ interface BinaryImage {
 }
 
 // Streaming FB2 metadata + cover extraction. Ported from book_tools/format/fb2sax.py.
-export function parseFb2(buf: Buffer): RawMeta {
+export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): RawMeta {
+  const buf = metaOnly ? fb2Head(input) : input;
   const meta: Fb2Work = {
     title: '',
     authors: [],
@@ -97,7 +139,7 @@ export function parseFb2(buf: Buffer): RawMeta {
       // Only "#id" references point at an embedded <binary>.
       if (href.startsWith('#')) meta.coverId = href.slice(1).toLowerCase();
     }
-    if (node.name === 'binary') {
+    if (node.name === 'binary' && !metaOnly) {
       binaryId = (attributes.id || '').toLowerCase();
       binaryType = (attributes['content-type'] || '').toLowerCase();
       inBinary = true;
@@ -154,7 +196,8 @@ export function parseFb2(buf: Buffer): RawMeta {
   }
 
   // Resolve the cover: the referenced binary, else the first image binary,
-  // else the first binary whose id looks like a cover.
+  // else the first binary whose id looks like a cover. (`images` is always
+  // empty under metaOnly, so this collapses to a no-op there.)
   const decode = (b64: string): Buffer | null => {
     const clean = b64.replace(/[^A-Za-z0-9+/=]/g, '');
     if (!clean) return null;

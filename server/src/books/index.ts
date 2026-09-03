@@ -19,13 +19,24 @@ export interface RawMeta {
   coverMime?: string;
 }
 
+export interface ParseOptions {
+  /**
+   * Metadata only: do not decode an embedded cover, and for FB2 read no
+   * further than `</description>`. The scanner sets this — it stores no cover
+   * bytes, and `extractCover` re-reads the file on demand — which is what
+   * makes a full-collection walk cheap. `buf` may then be a *prefix* of the
+   * file rather than the whole of it.
+   */
+  metaOnly?: boolean;
+}
+
 // Returns normalised book metadata for a supported file, or a minimal record
 // derived from the filename for formats we cannot introspect (pdf, djvu, mobi).
-export function parseBook(buf: Buffer, filename: string): BookMeta {
+export function parseBook(buf: Buffer, filename: string, opts: ParseOptions = {}): BookMeta {
   const ext = path.extname(filename).toLowerCase();
   try {
-    if (ext === '.fb2') return normalize(parseFb2(buf), filename);
-    if (ext === '.epub') return normalize(parseEpub(buf), filename);
+    if (ext === '.fb2') return normalize(parseFb2(buf, opts), filename);
+    if (ext === '.epub') return normalize(parseEpub(buf, opts), filename);
     if (ext === '.mobi') return normalize(mobiMeta(buf), filename);
   } catch {
     /* fall through to filename-only metadata */

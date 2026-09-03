@@ -59,6 +59,13 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   whole into memory. The scan commits books in batches (`SOPDS_SCAN_BATCH_SIZE`,
   default 10 000) so a first import of hundreds of thousands of books makes them
   searchable and downloadable as it runs, instead of only at the end.
+  A scan reads only each book's metadata header — for FB2, the bytes up to
+  `</description>` — so the body text and the embedded cover are never
+  decompressed or parsed; covers are read from the file on demand instead.
+  Books are written to PostgreSQL in bulk statements, and several archives are
+  read in parallel (`SOPDS_SCAN_CONCURRENCY`, default: from the available CPUs).
+  On a collection of FB2 files in `.zip` archives that is worth roughly **20x**
+  over reading each book whole.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
 - Light / dark MUI theme, plus an **e-ink mode** for e-readers (Lenovo Smart
   Paper, Onyx Boox, …). Auto-detected client-side from `(update: slow)` /

@@ -36,6 +36,20 @@ term; this file is the prose.
   since the last scan is skipped without being reopened. The raw one-shot is
   `scan/engine.ts` `runOnce()` (the CLI and the tests call it directly); the
   server always goes through the **Scanner**.
+- **Metadata header** — the only part of a book file a scan reads. For FB2 that
+  is the bytes up to `</description>`; the body and the base64 `<binary>` cover
+  after it are never inflated and never parsed
+  (`parseBook(buf, name, { metaOnly: true })` on top of `zip.ts` `readHead`).
+  Covers are re-read from the file on demand by `files.ts` `readBookCover`, so
+  nothing is lost — and a walk of a 700k fb2-in-zip collection costs roughly a
+  twentieth of what reading each file whole did.
+- **Bulk write** — the scan's unit of database work. Up to 500 parsed books go
+  out as one `INSERT … SELECT * FROM UNNEST(…) ON CONFLICT` per table, and a
+  directory's or archive's already-known filenames arrive in a single query, so
+  the walk costs a handful of round-trips per thousand books instead of five
+  per book. `scanConcurrency` readers work in parallel (decompression runs on
+  libuv's threadpool) while every write funnels through one serialised
+  `Writer`, which owns the batch transaction.
 - **Hydrate** — turn a `BookRow` into a `Book` by loading its related authors,
   genres and series (`repo.hydrateBook`).
 - **Page&lt;T&gt;** — a slice of a listing: `items` plus `total` / `page` /
@@ -48,6 +62,8 @@ term; this file is the prose.
   PostgreSQL) under `SOPDS_TEST_DB=mem`. Placeholders are written `?` / `@name`
   and translated to `$n`. `db.tx(fn)` wraps a unit of work; `db.begin()` returns
   a **`Tx`** you commit/roll back yourself (the scanner's batch flushing).
+  Bulk statements are written in native `$n` form and pass arrays straight
+  through.
 - **Scanner** (`scan/`) — the one module that owns **Scan**: `Scanner.trigger(reason)`
   / `status()` / `start()` / `stop()`. Behind it: the collection walk
   (`scan/engine.ts`), the cron tick (`scan/schedule.ts`), the debounced

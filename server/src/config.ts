@@ -18,6 +18,7 @@ export interface Config {
   bookExtensions: string[];
   zipScan: boolean;
   scanBatchSize: number;
+  scanConcurrency: number;
   maxItems: number;
   doublesHide: boolean;
   siteUrl: string;
@@ -58,6 +59,7 @@ export const config: Config = {
   // rather than in one transaction at the end. Keeps a 700k-book first scan from
   // holding a giant transaction and makes books searchable while it runs.
   scanBatchSize: Number(process.env.SOPDS_SCAN_BATCH_SIZE) || 1000,
+  scanConcurrency: Number(process.env.SOPDS_SCAN_CONCURRENCY) || 0,
   // Max items returned per page.
   maxItems: Number(process.env.SOPDS_MAXITEMS) || 50,
   // Hide duplicate books (same title + same author set) in listings.

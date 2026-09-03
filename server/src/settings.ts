@@ -32,6 +32,7 @@ export interface Settings {
   bookExtensions: string;
   zipScan: boolean;
   scanBatchSize: number;
+  scanConcurrency: number;
   deleteMissing: boolean;
   scanEnabled: boolean;
   scanCron: string;
@@ -67,6 +68,9 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'scanBatchSize', group: 'Scanning', type: 'int', default: config.scanBatchSize,
     min: 1, max: 1_000_000, label: 'Publish books every N added',
     help: 'During a scan, commit and make books available in batches of this size instead of waiting for the whole scan to finish' },
+  { key: 'scanConcurrency', group: 'Scanning', type: 'int', default: config.scanConcurrency,
+    min: 0, max: 64, label: 'Parallel readers',
+    help: 'How many archives/folders to read at once. Decompression runs off the main thread, so raising this uses more cores. 0 picks a value from the available CPUs' },
   { key: 'deleteMissing', group: 'Scanning', type: 'bool', default: true,
     label: 'Remove missing books',
     help: 'Delete catalog entries whose files disappeared since the last scan' },
