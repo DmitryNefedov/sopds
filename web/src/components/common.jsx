@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Alert,
@@ -14,6 +14,7 @@ import {
   Typography,
 } from '@mui/material';
 import { bookCoverUrl, bookDownloadUrl } from '../api.js';
+import { EinkContext } from '../main.jsx';
 
 const ALL_FORMATS = ['fb2', 'epub', 'mobi'];
 
@@ -72,6 +73,7 @@ export function Pager({ meta, page, onChange }) {
 }
 
 export function BookCard({ book }) {
+  const { eink } = useContext(EinkContext);
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardActionArea
@@ -80,19 +82,34 @@ export function BookCard({ book }) {
         sx={{ flexGrow: 1 }}
       >
         <Box
+          component="img"
+          src={bookCoverUrl(book.id, eink)}
+          alt=""
+          loading="lazy"
           sx={{
+            display: 'block',
+            width: '100%',
             aspectRatio: '2 / 3',
+            objectFit: 'cover',
             bgcolor: 'action.hover',
-            backgroundImage: `url(${bookCoverUrl(book.id)})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
+            borderBottom: eink ? '1.5px solid' : 'none',
+            borderColor: 'divider',
+            filter: eink ? 'grayscale(1) contrast(1.15)' : 'none',
           }}
         />
         <CardContent sx={{ pb: 1 }}>
-          <Typography variant="subtitle2" noWrap title={book.title}>
+          <Typography
+            variant="subtitle2"
+            title={book.title}
+            sx={eink ? { whiteSpace: 'normal' } : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          >
             {book.title}
           </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={eink ? { whiteSpace: 'normal' } : { display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          >
             {book.authors?.map((a) => a.full_name).join(', ') || '—'}
           </Typography>
           {book.doubles > 0 && (
@@ -110,7 +127,13 @@ export function BookCard({ book }) {
               key={fmt}
               size="small"
               variant={fmt === book.format ? 'contained' : 'outlined'}
-              sx={{ minWidth: 0, px: 1, py: 0.25, fontSize: 11, lineHeight: 1.6 }}
+              sx={{
+                minWidth: 0,
+                px: 1,
+                py: eink ? 0.5 : 0.25,
+                fontSize: eink ? 13 : 11,
+                lineHeight: 1.6,
+              }}
               href={`${bookDownloadUrl(book.id)}?format=${fmt}`}
               title={
                 fmt === book.format
@@ -128,17 +151,20 @@ export function BookCard({ book }) {
 }
 
 export function BookGrid({ books }) {
+  const { eink } = useContext(EinkContext);
   return (
     <Box
       sx={{
         display: 'grid',
         gap: 2,
-        gridTemplateColumns: {
-          xs: 'repeat(2, 1fr)',
-          sm: 'repeat(3, 1fr)',
-          md: 'repeat(4, 1fr)',
-          lg: 'repeat(5, 1fr)',
-        },
+        gridTemplateColumns: eink
+          ? { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)' }
+          : {
+              xs: 'repeat(2, 1fr)',
+              sm: 'repeat(3, 1fr)',
+              md: 'repeat(4, 1fr)',
+              lg: 'repeat(5, 1fr)',
+            },
       }}
     >
       {books.map((b) => (

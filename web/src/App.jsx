@@ -18,6 +18,7 @@ import {
   ListItemIcon,
   ListItemText,
   Toolbar,
+  Tooltip,
   Typography,
   alpha,
   useMediaQuery,
@@ -34,7 +35,8 @@ import FolderIcon from '@mui/icons-material/Folder';
 import SettingsIcon from '@mui/icons-material/Settings';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
-import { ColorModeContext } from './main.jsx';
+import ChromeReaderModeIcon from '@mui/icons-material/ChromeReaderMode';
+import { ColorModeContext, EinkContext } from './main.jsx';
 
 import Home from './pages/Home.jsx';
 import SearchResults from './pages/SearchResults.jsx';
@@ -56,7 +58,7 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
 ];
 
-function SearchField() {
+function SearchField({ eink }) {
   const theme = useTheme();
   const navigate = useNavigate();
   const [value, setValue] = useState('');
@@ -69,9 +71,12 @@ function SearchField() {
       }}
       sx={{
         position: 'relative',
-        borderRadius: 2,
-        bgcolor: alpha(theme.palette.common.white, 0.15),
-        '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.25) },
+        borderRadius: eink ? 0 : 2,
+        border: eink ? `2px solid ${theme.palette.text.primary}` : 'none',
+        bgcolor: eink ? 'background.paper' : alpha(theme.palette.common.white, 0.15),
+        '&:hover': eink
+          ? {}
+          : { bgcolor: alpha(theme.palette.common.white, 0.25) },
         ml: { xs: 1, sm: 3 },
         flexGrow: 1,
         maxWidth: 560,
@@ -84,7 +89,7 @@ function SearchField() {
         placeholder="Search authors, books, series…"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        sx={{ color: 'inherit', pl: 5, pr: 1, py: 1, width: '100%' }}
+        sx={{ color: 'inherit', pl: 5, pr: 1, py: eink ? 1.25 : 1, width: '100%' }}
       />
     </Box>
   );
@@ -94,11 +99,14 @@ export default function App() {
   const [open, setOpen] = useState(false);
   const theme = useTheme();
   const colorMode = useContext(ColorModeContext);
+  const einkCtx = useContext(EinkContext);
+  const eink = einkCtx.eink;
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const location = useLocation();
+  const drawerWidth = eink ? 220 : 240;
 
   const drawer = (
-    <List sx={{ width: 240 }}>
+    <List sx={{ width: drawerWidth }}>
       {NAV.map((n) => (
         <ListItemButton
           key={n.to}
@@ -111,8 +119,13 @@ export default function App() {
           }
           onClick={() => setOpen(false)}
         >
-          <ListItemIcon>{n.icon}</ListItemIcon>
-          <ListItemText primary={n.label} />
+          <ListItemIcon sx={{ color: eink ? 'text.primary' : undefined }}>
+            {n.icon}
+          </ListItemIcon>
+          <ListItemText
+            primary={n.label}
+            primaryTypographyProps={eink ? { fontWeight: 600 } : undefined}
+          />
         </ListItemButton>
       ))}
     </List>
@@ -135,11 +148,23 @@ export default function App() {
           >
             SimpleOPDS
           </Typography>
-          <SearchField />
+          <SearchField eink={eink} />
           <Box sx={{ flexGrow: 1 }} />
-          <IconButton color="inherit" onClick={colorMode.toggle}>
-            {theme.palette.mode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
-          </IconButton>
+          <Tooltip title={eink ? 'E-ink mode: on' : 'E-ink mode: off'}>
+            <IconButton
+              color="inherit"
+              onClick={einkCtx.toggle}
+              aria-pressed={eink}
+              sx={eink ? { outline: '2px solid currentColor' } : undefined}
+            >
+              <ChromeReaderModeIcon />
+            </IconButton>
+          </Tooltip>
+          {!eink && (
+            <IconButton color="inherit" onClick={colorMode.toggle}>
+              {theme.palette.mode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
+            </IconButton>
+          )}
         </Toolbar>
       </AppBar>
 
@@ -147,9 +172,9 @@ export default function App() {
         <Drawer
           variant="permanent"
           sx={{
-            width: 240,
+            width: drawerWidth,
             flexShrink: 0,
-            [`& .MuiDrawer-paper`]: { width: 240, boxSizing: 'border-box' },
+            [`& .MuiDrawer-paper`]: { width: drawerWidth, boxSizing: 'border-box' },
           }}
         >
           <Toolbar />

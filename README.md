@@ -49,7 +49,13 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   resolution), and by **watching the folder** (`server/src/watcher.js`) — a
   debounced rescan a few seconds after files are added, changed or removed.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
-- Light / dark MUI theme.
+- Light / dark MUI theme, plus an **e-ink mode** for e-readers (Lenovo Smart
+  Paper, Onyx Boox, Kindle browser, …): auto-detected via `(update: slow)` /
+  `(monochrome)` media queries and a user-agent check, with a manual toggle in
+  the top bar and on `/settings` (also `?eink=1`). It forces pure black-on-white,
+  kills animations/transitions, squares off corners, enlarges hit targets, and
+  serves a high-contrast grayscale "no cover" placeholder. The choice is stored
+  per device.
 
 ## Quick start
 

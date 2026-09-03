@@ -70,22 +70,29 @@ export function translitName(s) {
   return out.replace(/_+/g, '_').replace(/^_|_$/g, '') || 'book';
 }
 
-let _nocover;
-export function nocover() {
-  if (_nocover !== undefined) return _nocover;
+const _nocover = {};
+export function nocover(variant = 'default') {
+  if (variant in _nocover) return _nocover[variant];
   const dir = path.join(config.rootDir, 'assets');
-  const candidates = [
-    ['nocover.png', 'image/png'],
-    ['nocover.svg', 'image/svg+xml'],
-    ['nocover.jpg', 'image/jpeg'],
-  ];
+  const sets = {
+    eink: [
+      ['nocover-eink.png', 'image/png'],
+      ['nocover-eink.svg', 'image/svg+xml'],
+    ],
+    default: [
+      ['nocover.png', 'image/png'],
+      ['nocover.svg', 'image/svg+xml'],
+      ['nocover.jpg', 'image/jpeg'],
+    ],
+  };
+  const candidates = [...(sets[variant] || []), ...sets.default];
+  _nocover[variant] = null;
   for (const [name, type] of candidates) {
     const p = path.join(dir, name);
     if (fs.existsSync(p)) {
-      _nocover = { data: fs.readFileSync(p), type };
-      return _nocover;
+      _nocover[variant] = { data: fs.readFileSync(p), type };
+      break;
     }
   }
-  _nocover = null;
-  return _nocover;
+  return _nocover[variant];
 }

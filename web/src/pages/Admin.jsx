@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
@@ -20,6 +20,36 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { apiGet, apiSend } from '../api.js';
 import { Loading, ErrorState } from '../components/common.jsx';
+import { EinkContext } from '../main.jsx';
+
+function DisplayCard() {
+  const { eink, detected, toggle } = useContext(EinkContext);
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6" gutterBottom>
+          This device
+        </Typography>
+        <FormControlLabel
+          control={<Switch checked={eink} onChange={toggle} />}
+          label={
+            <Box>
+              <Typography variant="body2">E-ink display mode</Typography>
+              <Typography variant="caption" color="text.secondary">
+                High-contrast black-on-white, no animations, larger targets.
+                {detected
+                  ? ' Auto-detected for this device.'
+                  : ' Not detected — enable if you are on an e-reader.'}
+                {' '}Saved on this device only.
+              </Typography>
+            </Box>
+          }
+          sx={{ alignItems: 'flex-start' }}
+        />
+      </CardContent>
+    </Card>
+  );
+}
 
 const CRON_PRESETS = [
   { label: 'Twice daily (00:00, 12:00)', value: '0 0,12 * * *' },
@@ -243,6 +273,8 @@ export default function Admin() {
           Admin token is enabled on the server.
         </Alert>
       )}
+
+      <DisplayCard />
 
       <ScanPanel scan={data.scan} onScan={runScan} scanning={scanning} />
 

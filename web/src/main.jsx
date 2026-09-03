@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -7,16 +7,49 @@ import '@fontsource/roboto/400.css';
 import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { buildTheme } from './theme.js';
+import { resolveEink, setEinkPref, mediaSaysEink } from './eink.js';
+import { setCoverEink } from './api.js';
 import App from './App.jsx';
 
 export const ColorModeContext = React.createContext({ toggle: () => {} });
+export const EinkContext = React.createContext({
+  eink: false,
+  detected: false,
+  toggle: () => {},
+});
+
+const initial = resolveEink();
+setCoverEink(initial.eink);
 
 function Root() {
   const [mode, setMode] = useState(
     () => localStorage.getItem('sopds-mode') || 'light',
   );
-  const theme = useMemo(() => buildTheme(mode), [mode]);
-  const ctx = useMemo(
+  const [eink, setEink] = useState(initial.eink);
+
+  // React to a device that starts reporting (update: slow) after load.
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mqls = ['(update: slow)', '(monochrome)'].map((q) =>
+      window.matchMedia(q),
+    );
+    const onChange = () => {
+      if (localStorage.getItem('sopds-eink') === null && mediaSaysEink())
+        setEink(true);
+    };
+    mqls.forEach((m) => m.addEventListener?.('change', onChange));
+    return () =>
+      mqls.forEach((m) => m.removeEventListener?.('change', onChange));
+  }, []);
+
+  const theme = useMemo(() => buildTheme(mode, eink), [mode, eink]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-eink', eink ? 'true' : 'false');
+    setCoverEink(eink);
+  }, [eink]);
+
+  const colorCtx = useMemo(
     () => ({
       mode,
       toggle: () =>
@@ -29,14 +62,29 @@ function Root() {
     [mode],
   );
 
+  const einkCtx = useMemo(
+    () => ({
+      eink,
+      detected: initial.detected,
+      toggle: () =>
+        setEink((v) => {
+          setEinkPref(!v);
+          return !v;
+        }),
+    }),
+    [eink],
+  );
+
   return (
-    <ColorModeContext.Provider value={ctx}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </ThemeProvider>
+    <ColorModeContext.Provider value={colorCtx}>
+      <EinkContext.Provider value={einkCtx}>
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </ThemeProvider>
+      </EinkContext.Provider>
     </ColorModeContext.Provider>
   );
 }

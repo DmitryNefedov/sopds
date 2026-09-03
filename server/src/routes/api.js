@@ -108,10 +108,11 @@ router.get('/books/:id/cover', (req, res) => {
     return res.send(img.data);
   }
 
-  const fallback = nocover();
+  const variant = req.query.eink === '1' ? 'eink' : 'default';
+  const fallback = nocover(variant);
   if (fallback) {
     res.setHeader('Content-Type', fallback.type);
-    res.setHeader('X-Cover', 'default');
+    res.setHeader('X-Cover', variant === 'eink' ? 'default-eink' : 'default');
     return res.send(fallback.data);
   }
   res.status(404).end();

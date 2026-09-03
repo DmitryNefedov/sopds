@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { useParams, Link as RouterLink } from 'react-router-dom';
 import {
   Box,
@@ -12,11 +12,13 @@ import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { useApi, bookCoverUrl, bookDownloadUrl } from '../api.js';
 import { Async, Crumbs } from '../components/common.jsx';
+import { EinkContext } from '../main.jsx';
 
 const ALL_FORMATS = ['fb2', 'epub', 'mobi'];
 
 export default function BookDetail() {
   const { id } = useParams();
+  const { eink } = useContext(EinkContext);
   const query = useApi(`/books/${id}`, [id]);
 
   return (
@@ -27,13 +29,16 @@ export default function BookDetail() {
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
             <Box
               component="img"
-              src={bookCoverUrl(book.id)}
+              src={bookCoverUrl(book.id, eink)}
               alt=""
               sx={{
-                width: 220,
+                width: eink ? 200 : 220,
                 maxWidth: '100%',
-                borderRadius: 2,
+                borderRadius: eink ? 0 : 2,
+                border: eink ? '1.5px solid' : 'none',
+                borderColor: 'divider',
                 bgcolor: 'action.hover',
+                filter: eink ? 'grayscale(1) contrast(1.15)' : 'none',
                 alignSelf: { xs: 'center', sm: 'flex-start' },
               }}
             />

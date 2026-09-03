@@ -1,63 +1,68 @@
 #!/usr/bin/env python3
-"""Regenerate the default book-cover placeholder (assets/nocover.png).
+"""Regenerate the default book-cover placeholders.
 
-Kept in the repo so the PNG can be rebuilt; the SVG (assets/nocover.svg) is
-the source of truth for the design.
+  python3 bin/make-nocover.py          -> assets/nocover.png       (colour)
+  python3 bin/make-nocover.py --eink   -> assets/nocover-eink.png  (1-bit, e-ink)
+
+The matching SVGs in assets/ are the source of truth for the design.
 """
 import os
+import sys
 from PIL import Image, ImageDraw, ImageFont
 
+EINK = "--eink" in sys.argv
+
 W, H = 600, 900
-SS = 3  # supersample for smooth edges
+SS = 3
 w, h = W * SS, H * SS
 
-img = Image.new("RGB", (w, h))
-px = img.load()
-top = (65, 80, 106)
-bot = (43, 53, 70)
-for y in range(h):
-    t = y / (h - 1)
-    px_row = tuple(round(top[i] + (bot[i] - top[i]) * t) for i in range(3))
-    for x in range(w):
-        px[x, y] = px_row
+if EINK:
+    BG = (255, 255, 255)
+    INK = (0, 0, 0)
+    img = Image.new("RGB", (w, h), BG)
+else:
+    img = Image.new("RGB", (w, h))
+    px = img.load()
+    top, bot = (65, 80, 106), (43, 53, 70)
+    for y in range(h):
+        t = y / (h - 1)
+        row = tuple(round(top[i] + (bot[i] - top[i]) * t) for i in range(3))
+        for x in range(w):
+            px[x, y] = row
 
 d = ImageDraw.Draw(img, "RGBA")
 
-# inner border
+border_col = (0, 0, 0, 255) if EINK else (255, 255, 255, 36)
 m = 26 * SS
-d.rounded_rectangle([m, m, w - m, h - m], radius=10 * SS,
-                    outline=(255, 255, 255, 36), width=2 * SS)
+d.rounded_rectangle([m, m, w - m, h - m], radius=(0 if EINK else 10 * SS),
+                    outline=border_col, width=(4 if EINK else 2) * SS)
 
-# open-book glyph: two page quads meeting at a center spine
+# open-book glyph
 cx, cy = w // 2, int(h * 0.42)
-lw = 6 * SS
-col = (203, 212, 227, 225)
-outer = 84 * SS      # distance from centre to outer page edge
-gap = 9 * SS         # half-gap at the spine
-top_y = cy - 66 * SS
-bot_y = cy + 66 * SS
-sag = 12 * SS        # how much the outer edge droops
-d.line([(cx - gap, top_y), (cx - gap, bot_y)], fill=col, width=lw)  # spine, left
-d.line([(cx + gap, top_y), (cx + gap, bot_y)], fill=col, width=lw)  # spine, right
-d.line(  # left page: spine-top -> outer-top -> outer-bottom -> spine-bottom
-    [(cx - gap, top_y), (cx - outer, top_y + sag),
-     (cx - outer, bot_y + sag), (cx - gap, bot_y)],
-    fill=col, width=lw, joint="curve")
-d.line(  # right page (mirror)
-    [(cx + gap, top_y), (cx + outer, top_y + sag),
-     (cx + outer, bot_y + sag), (cx + gap, bot_y)],
-    fill=col, width=lw, joint="curve")
+lw = (8 if EINK else 6) * SS
+col = (0, 0, 0, 255) if EINK else (203, 212, 227, 225)
+outer, gap, sag = 84 * SS, 9 * SS, 12 * SS
+top_y, bot_y = cy - 66 * SS, cy + 66 * SS
+d.line([(cx - gap, top_y), (cx - gap, bot_y)], fill=col, width=lw)
+d.line([(cx + gap, top_y), (cx + gap, bot_y)], fill=col, width=lw)
+d.line([(cx - gap, top_y), (cx - outer, top_y + sag),
+        (cx - outer, bot_y + sag), (cx - gap, bot_y)], fill=col, width=lw, joint="curve")
+d.line([(cx + gap, top_y), (cx + outer, top_y + sag),
+        (cx + outer, bot_y + sag), (cx + gap, bot_y)], fill=col, width=lw, joint="curve")
+
 
 def load_font(size):
     for name in (
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/Library/Fonts/Arial.ttf",
     ):
         if os.path.exists(name):
             return ImageFont.truetype(name, size)
     return ImageFont.load_default()
+
 
 def spaced(draw, text, y, size, fill, tracking):
     font = load_font(size)
@@ -68,10 +73,16 @@ def spaced(draw, text, y, size, fill, tracking):
         draw.text((x, y), ch, font=font, fill=fill)
         x += cw + tracking
 
-spaced(d, "NO COVER", int(h * 0.68), 30 * SS, (231, 236, 245, 235), 6 * SS)
-spaced(d, "SimpleOPDS", int(h * 0.68) + 46 * SS, 15 * SS, (231, 236, 245, 120), 2 * SS)
+
+main = (0, 0, 0, 255) if EINK else (231, 236, 245, 235)
+sub = (0, 0, 0, 255) if EINK else (231, 236, 245, 120)
+spaced(d, "NO COVER", int(h * 0.68), 32 * SS, main, 6 * SS)
+spaced(d, "SimpleOPDS", int(h * 0.68) + 48 * SS, 15 * SS, sub, 2 * SS)
 
 img = img.resize((W, H), Image.LANCZOS)
-out = os.path.join(os.path.dirname(__file__), "..", "assets", "nocover.png")
+name = "nocover-eink.png" if EINK else "nocover.png"
+if EINK:
+    img = img.convert("L")  # 8-bit grayscale: legible text, still ~3 KB
+out = os.path.join(os.path.dirname(__file__), "..", "assets", name)
 img.save(out, "PNG", optimize=True)
 print("wrote", os.path.normpath(out), os.path.getsize(out), "bytes")
