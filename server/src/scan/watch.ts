@@ -1,20 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { FSWatcher } from 'node:fs';
-import { S, onChange } from './settings.js';
-import { runScan, onScanDone } from './scheduler.js';
+import { S } from '../settings.js';
 
-// On-demand scanning: watch the book collection folder and trigger an
-// incremental rescan a few seconds after the filesystem goes quiet.
+// Folder-watch: a debounced "something changed under the collection root" signal.
 //
 // A manual recursive watcher (watch the root + every sub-directory) is used so
-// behaviour is identical on macOS, Linux and Windows.
+// behaviour is identical on macOS, Linux and Windows. When the filesystem goes
+// quiet for `watchDebounce` seconds it calls the `onSettled` callback the
+// Scanner passed in; the Scanner turns that into a scan trigger.
 
 const watchers = new Map<string, FSWatcher>(); // absolute dir -> fs.FSWatcher
 let debounceTimer: NodeJS.Timeout | null = null;
-let queued = false; // a change arrived while a scan was running
-let active = false;
 let watchedRoot: string | null = null;
+let settled: (() => void) | null = null;
 
 const BOOK_LIKE = /\.(fb2|epub|mobi|pdf|djvu|zip)$/i;
 
@@ -23,23 +22,22 @@ function bookRelevant(name: string | null): boolean {
   return !name || !path.extname(name) || BOOK_LIKE.test(name);
 }
 
-function scheduleScan(): void {
+function scheduleSettled(): void {
   if (debounceTimer) clearTimeout(debounceTimer);
   const wait = Math.max(1, Number(S.watchDebounce) || 5) * 1000;
-  debounceTimer = setTimeout(async () => {
+  debounceTimer = setTimeout(() => {
     debounceTimer = null;
-    const res = await runScan({ reason: 'watch' });
-    if (res && 'skipped' in res && res.skipped) queued = true; // scan was busy; retry after it ends
+    settled?.();
   }, wait);
 }
 
-function onDirEvent(_dir: string): (eventType: string, filename: string | Buffer | null) => void {
+function onDirEvent(): (eventType: string, filename: string | Buffer | null) => void {
   return (eventType, filename) => {
     const name = typeof filename === 'string' ? filename : filename ? filename.toString() : null;
     // A rename on a directory entry may mean a new/removed sub-directory:
     // rebuild the watch set (cheap) so we keep seeing deep changes.
     if (eventType === 'rename') syncWatchers(watchedRoot);
-    if (bookRelevant(name)) scheduleScan();
+    if (bookRelevant(name)) scheduleSettled();
   };
 }
 
@@ -63,16 +61,14 @@ function syncWatchers(root: string | null): void {
   };
   walk(root);
 
-  // add new
   for (const dir of wanted) {
     if (watchers.has(dir)) continue;
     try {
-      watchers.set(dir, fs.watch(dir, onDirEvent(dir)));
+      watchers.set(dir, fs.watch(dir, onDirEvent()));
     } catch {
       /* directory vanished between readdir and watch */
     }
   }
-  // drop gone
   for (const [dir, w] of watchers) {
     if (!wanted.has(dir)) {
       w.close();
@@ -81,57 +77,37 @@ function syncWatchers(root: string | null): void {
   }
 }
 
-export function watcherState() {
-  // returned as-is to the admin API
+export function watchStatus(): { watching: boolean; watchedDirs: number; pending: boolean } {
   return {
-    enabled: S.watchEnabled,
     watching: watchers.size > 0,
-    root: watchedRoot,
     watchedDirs: watchers.size,
     pending: Boolean(debounceTimer),
-    debounceSeconds: Number(S.watchDebounce) || 5,
   };
 }
 
-export function startWatcher(): void {
-  if (active) return;
-  active = true;
-
-  onScanDone(() => {
-    if (queued) {
-      queued = false;
-      scheduleScan();
-    }
-  });
-
-  onChange((patch) => {
-    if ('watchEnabled' in patch) {
-      if (S.watchEnabled) enable();
-      else disable();
-    } else if ('rootLib' in patch && watchers.size) {
-      disable();
-      enable();
-    } else if ('watchDebounce' in patch && debounceTimer) {
-      scheduleScan(); // re-arm with the new delay
-    }
-  });
-
-  if (S.watchEnabled) enable();
-}
-
-function enable(): void {
+/** Start watching `S.rootLib`; `onSettled` fires once the filesystem goes quiet. */
+export function startWatch(onSettled: () => void): void {
+  settled = onSettled;
   watchedRoot = S.rootLib;
   syncWatchers(watchedRoot);
 }
 
-function disable(): void {
+export function stopWatch(): void {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = null;
   for (const w of watchers.values()) w.close();
   watchers.clear();
+  watchedRoot = null;
 }
 
-export function stopWatcher(): void {
-  disable();
-  active = false;
+/** Re-point the watch at the current `S.rootLib` (called when the setting changes). */
+export function restartWatch(): void {
+  if (!settled) return;
+  const cb = settled;
+  stopWatch();
+  startWatch(cb);
+}
+
+export function isWatching(): boolean {
+  return watchers.size > 0;
 }

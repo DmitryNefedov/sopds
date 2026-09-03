@@ -78,7 +78,7 @@ router.get(
     if (!book) return res.status(404).json({ error: 'not found' });
     let buf: Buffer;
     try {
-      buf = readBookBytes(book);
+      buf = await readBookBytes(book);
     } catch {
       return res.status(404).json({ error: 'file missing' });
     }
@@ -113,7 +113,7 @@ router.get(
     if (!book) return res.status(404).end();
     res.setHeader('Cache-Control', 'public, max-age=86400');
 
-    const img = readBookCover(book);
+    const img = await readBookCover(book);
     if (img && img.data && img.data.length) {
       res.setHeader('Content-Type', img.mime || 'image/jpeg');
       return res.send(img.data);

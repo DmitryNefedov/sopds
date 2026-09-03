@@ -49,10 +49,16 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   django-constance screen. Edit the book-collection path, file extensions, page
   size, duplicate hiding, the external converter, etc. at runtime (persisted in
   the DB, no restart). Optionally protect it with `SOPDS_ADMIN_TOKEN`.
-- **Three ways to scan** the collection: on demand from the settings page
-  ("Scan now"), on a **cron schedule** (`server/src/scheduler.ts`, minute
-  resolution), and by **watching the folder** (`server/src/watcher.ts`) — a
-  debounced rescan a few seconds after files are added, changed or removed.
+- **Three ways to scan** the collection, all owned by the Scanner module
+  (`server/src/scan/`): on demand from the settings page ("Scan now"), on a
+  **cron schedule** (`scan/schedule.ts`, minute resolution), and by **watching
+  the folder** (`scan/watch.ts`) — a debounced rescan a few seconds after files
+  are added, changed or removed. Overlapping triggers queue one follow-up run.
+- **Built for large collections.** `.zip` archives are read one entry at a
+  time (`server/src/zip.ts`, streaming) — never expanded to disk, never loaded
+  whole into memory. The scan commits books in batches (`SOPDS_SCAN_BATCH_SIZE`,
+  default 10 000) so a first import of hundreds of thousands of books makes them
+  searchable and downloadable as it runs, instead of only at the end.
 - OPDS 1.1 Atom feed at `/opds/` for e‑reader apps.
 - Light / dark MUI theme, plus an **e-ink mode** for e-readers (Lenovo Smart
   Paper, Onyx Boox, …). Auto-detected client-side from `(update: slow)` /
@@ -77,6 +83,10 @@ stack is defined in [`docker-compose.yml`](docker-compose.yml) — three service
 | `postgres` | `postgres:16-alpine` | catalog database, data in a volume |
 | `api` | built from [`server/Dockerfile`](server/Dockerfile) | Express API + scanner + OPDS feed |
 | `ui` | built from [`web/Dockerfile`](web/Dockerfile) | nginx serving the React build, reverse-proxying `/api`, `/opds`, `/debug`, `/healthz` to `api` |
+
+All three services have a compose **healthcheck**. `api` serves `GET /health`
+(and `/healthz`), which also pings the database, so `ui` waits for `api` to be
+healthy before starting; nginx answers its own `GET /health` locally.
 
 ### 1. Configure
 
@@ -221,9 +231,10 @@ defaults for the tunables below.
 
 Everything else is edited at runtime on the **`/settings`** page and stored in
 the database (`settings` table): catalog title/subtitle, book collection path,
-file extensions, zip scanning, "remove missing books", scheduled-scan on/off +
-cron expression, folder-watch on/off + settle time, items per page, duplicate
-hiding, cover display, external converter command, and download-filename style.
+file extensions, zip scanning, scan batch size, "remove missing books",
+scheduled-scan on/off + cron expression, folder-watch on/off + settle time,
+items per page, duplicate hiding, cover display, external converter command, and
+download-filename style.
 
 ## Tests
 

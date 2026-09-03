@@ -187,3 +187,21 @@ export interface ScanStats {
   archives: number;
   error?: string;
 }
+
+/** One completed Scan run, persisted as `__state.lastScan` and shown in the admin UI. */
+export interface ScanRecord extends Partial<ScanStats> {
+  startedAt: string;
+  finishedAt: string;
+  reason: string;
+  error?: string;
+}
+
+/** Live status of the Scanner module. */
+export interface ScanStatus {
+  running: boolean;
+  progress: { added: number; skipped: number } | null;
+  last: ScanRecord | null;
+  enabled: boolean;
+  cron: string;
+  watch: { watching: boolean; watchedDirs: number; pending: boolean };
+}

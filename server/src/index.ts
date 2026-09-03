@@ -7,10 +7,9 @@ import cors from 'cors';
 import compression from 'compression';
 import morgan from 'morgan';
 import config from './config.js';
-import { initSchema, updateCounters } from './db.js';
+import db, { initSchema, updateCounters } from './db.js';
 import { S, loadSettings } from './settings.js';
-import { startScheduler } from './scheduler.js';
-import { startWatcher } from './watcher.js';
+import { Scanner } from './scan/index.js';
 import apiRoutes from './routes/api.js';
 import opdsRoutes from './routes/opds.js';
 import adminRoutes from './routes/admin.js';
@@ -44,8 +43,15 @@ async function main(): Promise<void> {
   app.use('/api', apiRoutes);
   app.use('/opds', opdsRoutes);
 
-  app.get('/healthz', (_req, res) => {
-    res.json({ ok: true });
+  // Liveness + DB readiness, used by the compose healthcheck. `/healthz` is
+  // kept as an alias for existing callers.
+  app.get(['/health', '/healthz'], async (_req, res) => {
+    try {
+      await db.query('SELECT 1');
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(503).json({ ok: false, error: (err as Error).message });
+    }
   });
 
   // Optionally serve the built React app (useful for `npm start` without the
@@ -83,8 +89,7 @@ async function main(): Promise<void> {
     console.log(
       `  database:        postgres ${config.db.url || `${config.db.host}:${config.db.port}/${config.db.database}`}`,
     );
-    startScheduler();
-    startWatcher();
+    Scanner.start();
     if (S.scanEnabled) console.log(`  scheduled scan:  ${S.scanCron}`);
     if (S.watchEnabled) console.log(`  watching:        ${S.rootLib}`);
   });

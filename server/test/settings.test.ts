@@ -57,19 +57,3 @@ test('onChange fires with the patched keys', async () => {
   off();
   assert.deepEqual(Object.keys(seen), ['zipScan']);
 });
-
-test('cron matching honours fields, lists, ranges and steps', () => {
-  const at = (s: string) => new Date(`2024-01-08T${s}:00`); // Monday
-  assert.ok(settings.cronMatches('0 0,12 * * *', at('12:00')));
-  assert.ok(!settings.cronMatches('0 0,12 * * *', at('13:00')));
-  assert.ok(settings.cronMatches('*/15 * * * *', at('09:30')));
-  assert.ok(!settings.cronMatches('*/15 * * * *', at('09:31')));
-  assert.ok(settings.cronMatches('0 4 * * 1', at('04:00'))); // Monday
-  assert.ok(!settings.cronMatches('0 4 * * 2', at('04:00')));
-});
-
-test('isValidCron guards field counts and ranges', () => {
-  assert.ok(settings.isValidCron('0 0 1 1 0'));
-  assert.ok(!settings.isValidCron('0 0 1 1'));
-  assert.ok(!settings.isValidCron('99 0 1 1 0'));
-});

@@ -1,13 +1,10 @@
 import fs from 'node:fs';
 import { Router } from 'express';
 import { SETTING_DEFS, getAll, setMany, SettingsError } from '../settings.js';
-import { runScan, scanState } from '../scheduler.js';
-import { watcherState } from '../watcher.js';
+import { Scanner } from '../scan/index.js';
 import { converterInfo } from '../convert/index.js';
 import config from '../config.js';
-import { ah, qstr } from '../http.js';
-
-const fullScanState = () => ({ ...scanState(), watch: watcherState() });
+import { qstr } from '../http.js';
 
 const router = Router();
 
@@ -47,7 +44,7 @@ router.get('/settings', (_req, res) => {
 router.put('/settings', async (req, res) => {
   try {
     const values = await setMany(req.body || {});
-    res.json({ values, converter: converterInfo(), scan: fullScanState() });
+    res.json({ values, converter: converterInfo(), scan: Scanner.status() });
   } catch (err) {
     if (err instanceof SettingsError) {
       res.status(err.status).json({ error: err.message, fields: err.fields });
@@ -71,15 +68,15 @@ router.get('/check-path', (req, res) => {
   }
 });
 
-router.get('/scan', (_req, res) => res.json(fullScanState()));
+router.get('/scan', (_req, res) => res.json(Scanner.status()));
 
-router.post(
-  '/scan',
-  ah(async (_req, res) => {
-    const result = await runScan({ reason: 'manual' });
-    res.json(result);
-  }),
-);
+router.post('/scan', (_req, res) => {
+  // A full first scan of a large collection can run for a long time; kick it off
+  // in the background and let the client poll GET /admin/scan for progress.
+  // Books are committed in batches, so they show up while it runs. If a scan is
+  // already running the request queues one follow-up.
+  res.json(Scanner.trigger('manual'));
+});
 
 router.get('/info', (_req, res) => {
   res.json({
@@ -87,7 +84,7 @@ router.get('/info', (_req, res) => {
     database: config.db.url || `${config.db.host}:${config.db.port}/${config.db.database}`,
     convertCacheDir: config.convertCacheDir,
     node: process.version,
-    scan: fullScanState(),
+    scan: Scanner.status(),
   });
 });
 

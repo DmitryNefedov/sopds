@@ -17,6 +17,7 @@ export interface Config {
   rootLib: string;
   bookExtensions: string[];
   zipScan: boolean;
+  scanBatchSize: number;
   maxItems: number;
   doublesHide: boolean;
   siteUrl: string;
@@ -53,6 +54,10 @@ export const config: Config = {
     .map((e) => e.toLowerCase()),
   // Scan .zip archives for books.
   zipScan: process.env.SOPDS_ZIPSCAN !== '0',
+  // Commit (and publish) books to the catalog every N additions during a scan,
+  // rather than in one transaction at the end. Keeps a 700k-book first scan from
+  // holding a giant transaction and makes books searchable while it runs.
+  scanBatchSize: Number(process.env.SOPDS_SCAN_BATCH_SIZE) || 1000,
   // Max items returned per page.
   maxItems: Number(process.env.SOPDS_MAXITEMS) || 50,
   // Hide duplicate books (same title + same author set) in listings.

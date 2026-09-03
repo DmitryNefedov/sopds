@@ -4,7 +4,7 @@
 // setting for this run only.
 import db, { initSchema } from '../src/db.js';
 import { setOverride, loadSettings, S } from '../src/settings.js';
-import { scan } from '../src/scanner.js';
+import { runOnce } from '../src/scan/engine.js';
 
 if (process.argv[2]) setOverride('rootLib', process.argv[2]);
 
@@ -12,5 +12,5 @@ await initSchema();
 await loadSettings();
 
 console.log(`Scanning ${S.rootLib} ...`);
-await scan({ log: console.log });
+await runOnce({ log: console.log });
 await db.end();

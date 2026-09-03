@@ -24,9 +24,19 @@ export interface Query {
   exec(sql: string): Promise<unknown>;
 }
 
+/** A transaction you drive by hand: run statements, then `commit()` or `rollback()`. */
+export interface Tx extends Query {
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+}
+
 export interface Db extends Query {
   end(): Promise<void>;
+  /** Run `fn` inside a transaction, committing on success and rolling back on throw. */
   tx<T>(fn: (q: Query) => Promise<T>): Promise<T>;
+  /** Open a transaction to commit/roll back yourself — used by the scanner to
+   *  flush books to the catalog in batches instead of one huge commit. */
+  begin(): Promise<Tx>;
 }
 
 // ---- backend selection --------------------------------------------------
@@ -164,26 +174,38 @@ function makeApi(runner: RawRunner): Query {
   };
 }
 
+async function begin(): Promise<Tx> {
+  const client = await backend.connect();
+  const api = makeApi((text, values) => client.query(text, values));
+  await client.query('BEGIN', []);
+  let settled = false;
+  const finish = async (verb: 'COMMIT' | 'ROLLBACK'): Promise<void> => {
+    if (settled) return;
+    settled = true;
+    try {
+      await client.query(verb, []);
+    } catch {
+      /* ignore: a failed COMMIT/ROLLBACK still needs the client released */
+    } finally {
+      client.release();
+    }
+  };
+  return { ...api, commit: () => finish('COMMIT'), rollback: () => finish('ROLLBACK') };
+}
+
 const db: Db = {
   ...makeApi((text, values) => backend.query(text, values)),
   end: () => backend.end(),
+  begin,
   async tx<T>(fn: (q: Query) => Promise<T>): Promise<T> {
-    const client = await backend.connect();
-    const api = makeApi((text, values) => client.query(text, values));
+    const t = await begin();
     try {
-      await client.query('BEGIN', []);
-      const result = await fn(api);
-      await client.query('COMMIT', []);
+      const result = await fn(t);
+      await t.commit();
       return result;
     } catch (err) {
-      try {
-        await client.query('ROLLBACK', []);
-      } catch {
-        /* ignore rollback failure */
-      }
+      await t.rollback();
       throw err;
-    } finally {
-      client.release();
     }
   },
 };

@@ -127,7 +127,13 @@ function ScanPanel({ scan, onScan, scanning }) {
                 size="small"
                 variant="outlined"
                 color={scan?.running ? 'warning' : 'default'}
-                label={scan?.running ? 'Scanning now…' : 'Idle'}
+                label={
+                  scan?.running
+                    ? scan.progress
+                      ? `Scanning… ${scan.progress.added.toLocaleString()} added`
+                      : 'Scanning now…'
+                    : 'Idle'
+                }
               />
               <Chip
                 size="small"
@@ -246,7 +252,11 @@ export default function Admin() {
       const res = await apiSend('POST', '/admin/scan');
       const scan = await apiGet('/admin/scan');
       setData((d) => ({ ...d, scan }));
-      setToast(res.error ? `Scan failed: ${res.error}` : `Scan complete: ${res.added} added`);
+      setToast(
+        res.started
+          ? 'Scan started — books appear as they are added'
+          : 'A scan is already running — another will follow it',
+      );
     } catch (err) {
       setToast(err.message || 'Scan failed');
     } finally {

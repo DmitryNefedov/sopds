@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip';
 import config from './config.js';
 import { S } from './settings.js';
 import { extractCover } from './books/index.js';
+import { readZipEntry } from './zip.js';
 import type { Book, CoverImage } from './types.js';
 
 const CAT_NORMAL = 0;
@@ -26,21 +27,20 @@ export function mimeFor(fmt: string): string {
 type BookRef = Pick<Book, 'path' | 'filename' | 'cat_type'>;
 
 // Returns a Buffer with the raw book bytes, or throws if the file is missing.
-export function readBookBytes(book: BookRef): Buffer {
+// For books inside a .zip only the requested entry is inflated — the archive is
+// never expanded to disk or read whole into memory.
+export async function readBookBytes(book: BookRef): Promise<Buffer> {
   const full = path.join(S.rootLib, book.path);
   if (book.cat_type === CAT_NORMAL) {
-    return fs.readFileSync(path.join(full, book.filename));
+    return fs.promises.readFile(path.join(full, book.filename));
   }
   // zip archive: book.path is the archive, book.filename the entry
-  const zip = new AdmZip(full);
-  const entry = zip.getEntry(book.filename);
-  if (!entry) throw new Error('entry not found in archive');
-  return entry.getData();
+  return readZipEntry(full, book.filename);
 }
 
-export function readBookCover(book: BookRef): CoverImage | null {
+export async function readBookCover(book: BookRef): Promise<CoverImage | null> {
   try {
-    const buf = readBookBytes(book);
+    const buf = await readBookBytes(book);
     return extractCover(buf, book.filename);
   } catch {
     return null;
