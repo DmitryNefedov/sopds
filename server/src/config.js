@@ -6,6 +6,10 @@ const ROOT = path.resolve(__dirname, '..');
 
 export const config = {
   port: Number(process.env.PORT) || 8000,
+  // Network interface to bind. Defaults to all interfaces so the catalog is
+  // reachable from other devices on the LAN (e-readers, tablets, …).
+  // Set HOST=127.0.0.1 to restrict to localhost.
+  host: process.env.HOST || '0.0.0.0',
   // Path to the sqlite database file.
   dbPath: process.env.SOPDS_DB || path.join(ROOT, 'data', 'sopds.db'),
   // Absolute path to the directory that holds the book collection.

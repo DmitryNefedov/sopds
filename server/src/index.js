@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
@@ -46,8 +47,25 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: err.message });
 });
 
-app.listen(config.port, () => {
-  console.log(`SimpleOPDS API listening on http://localhost:${config.port}`);
+function lanAddresses() {
+  const out = [];
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    for (const i of ifaces || []) {
+      if (i.family === 'IPv4' && !i.internal) out.push(i.address);
+    }
+  }
+  return out;
+}
+
+app.listen(config.port, config.host, () => {
+  const bindsAll = config.host === '0.0.0.0' || config.host === '::';
+  console.log(`SimpleOPDS listening on ${config.host}:${config.port}`);
+  console.log(`  local:   http://localhost:${config.port}`);
+  if (bindsAll) {
+    for (const ip of lanAddresses()) {
+      console.log(`  network: http://${ip}:${config.port}`);
+    }
+  }
   console.log(`  book collection: ${S.rootLib}`);
   console.log(`  database:        ${config.dbPath}`);
   startScheduler();

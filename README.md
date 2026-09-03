@@ -82,6 +82,11 @@ cd web && npm run build          # -> web/dist
 cd ../server && npm start        # serves web/dist at /
 ```
 
+The server binds `0.0.0.0` by default, so it is reachable from other devices on
+your network (e-readers, tablets) — it prints the LAN URLs on startup. Set
+`HOST=127.0.0.1` to restrict it to localhost. `npm run dev` for the UI also
+listens on all interfaces (point it at a non-local API with `SOPDS_API=`).
+
 No book collection handy? `node server/bin/make-samples.js` writes a tiny sample
 library into `server/books/`.
 
