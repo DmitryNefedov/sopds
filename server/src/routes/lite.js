@@ -398,4 +398,13 @@ router.get('/catalogs', (req, res) => {
   );
 });
 
+// eslint-disable-next-line no-unused-vars
+router.use((err, req, res, _next) => {
+  console.error('lite route error:', err);
+  res
+    .status(500)
+    .type('html')
+    .send(page('Error', `<h1>Something went wrong</h1><p>${esc(err.message)}</p>`));
+});
+
 export default router;
