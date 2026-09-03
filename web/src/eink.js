@@ -11,18 +11,41 @@ const STORAGE_KEY = 'sopds-eink';
 const UA_MARKERS =
   /\b(e-?ink|eink|epaper|e-?paper)\b|onyx|boox|remarkable|dasung|meebme|meebook|bigme|pocketbook|\bkobo\b|kindle|silk|hisense.*(a5|a7|a9)|lenovo.*(smart\s?paper|tb[0-9]{3,}|zac[0-9])/i;
 
-export function mediaSaysEink() {
-  if (typeof window === 'undefined' || !window.matchMedia) return false;
+const mq = (q) => {
   try {
-    // (update: slow) is the spec-blessed e-ink signal; (monochrome) catches
-    // grayscale panels that still report a fast-ish refresh.
-    return (
-      window.matchMedia('(update: slow)').matches ||
-      window.matchMedia('(monochrome)').matches
-    );
+    return !!window.matchMedia && window.matchMedia(q).matches;
   } catch {
     return false;
   }
+};
+
+// The server sets <html data-eink="server"> when the request headers look
+// like an e-ink reader (e.g. EinkBro's X-Requested-With). Most reliable.
+export function serverSaysEink() {
+  return (
+    typeof document !== 'undefined' &&
+    document.documentElement.getAttribute('data-eink') === 'server'
+  );
+}
+
+export function mediaSaysEink() {
+  // (update: slow) is the spec-blessed e-ink signal; (monochrome) catches
+  // grayscale panels that still report a fast-ish refresh.
+  return mq('(update: slow)') || mq('(monochrome)');
+}
+
+// Fallback heuristic for e-ink Android browsers that spoof a generic UA and
+// implement none of the update/monochrome features (old Chromium): a
+// touch-only device with reduced motion that does NOT report a fast display.
+export function heuristicSaysEink() {
+  const oldChromium = /Chrome\/(\d{1,2}|10[0-4])\./.test(navigator.userAgent || '');
+  return (
+    mq('(prefers-reduced-motion: reduce)') &&
+    mq('(hover: none)') &&
+    mq('(pointer: coarse)') &&
+    !mq('(update: fast)') &&
+    oldChromium
+  );
 }
 
 export function uaSaysEink() {
@@ -59,6 +82,7 @@ export function resolveEink() {
   const stored = storedEinkPref();
   if (stored !== null) return { eink: stored, detected: false };
 
-  const detected = mediaSaysEink() || uaSaysEink();
+  const detected =
+    serverSaysEink() || mediaSaysEink() || uaSaysEink() || heuristicSaysEink();
   return { eink: detected, detected };
 }

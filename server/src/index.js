@@ -15,6 +15,7 @@ import apiRoutes from './routes/api.js';
 import opdsRoutes from './routes/opds.js';
 import adminRoutes from './routes/admin.js';
 import { requestLogger, debugRouter } from './debug.js';
+import { einkSignals } from './eink-detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,7 +39,29 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 // Serve the built React app if present.
 const webDist = path.resolve(__dirname, '..', '..', 'web', 'dist');
 if (fs.existsSync(webDist)) {
-  app.use(express.static(webDist));
+  const indexPath = path.join(webDist, 'index.html');
+  let indexHtml = fs.readFileSync(indexPath, 'utf8');
+  fs.watchFile(indexPath, () => {
+    try {
+      indexHtml = fs.readFileSync(indexPath, 'utf8');
+    } catch {
+      /* keep the old copy */
+    }
+  });
+
+  // When the request looks like an e-ink reader, stamp the served HTML so the
+  // SPA starts in e-ink mode with no flash of the colour theme.
+  const sendApp = (req, res) => {
+    const sig = einkSignals(req);
+    let html = indexHtml;
+    if (sig.eink) {
+      html = html.replace(/<html(\s|>)/i, '<html data-eink="server"$1');
+      res.setHeader('X-Eink-Detected', sig.reasons.join('; ') || '1');
+    }
+    res.type('html').send(html);
+  };
+
+  app.use(express.static(webDist, { index: false }));
   app.get('*', (req, res, next) => {
     if (
       req.path.startsWith('/api') ||
@@ -46,7 +69,7 @@ if (fs.existsSync(webDist)) {
       req.path.startsWith('/debug')
     )
       return next();
-    res.sendFile(path.join(webDist, 'index.html'));
+    sendApp(req, res);
   });
 }
 

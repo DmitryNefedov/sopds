@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { einkSignals } from './eink-detect.js';
 
 // Verbose request logging + a self-reporting client-inspection page, used to
 // work out how to detect a particular device (e-ink readers etc.).
@@ -55,6 +56,7 @@ debugRouter.get('/headers', (req, res) => {
     remoteAddress: req.socket.remoteAddress,
     url: req.originalUrl,
     headers: req.headers,
+    einkDetected: einkSignals(req),
   });
 });
 
@@ -65,8 +67,9 @@ debugRouter.post('/report', (req, res) => {
   console.log(JSON.stringify(req.body, null, 2));
   console.log('║  request headers for the same client:');
   console.log(JSON.stringify(req.headers, null, 2));
+  console.log('║  server e-ink detection:', JSON.stringify(einkSignals(req)));
   console.log('╚═══════════════════════════════════════════════════════════');
-  res.json({ ok: true });
+  res.json({ ok: true, einkDetected: einkSignals(req) });
 });
 
 // Human-friendly page: open http://<server>:<port>/debug on the device.
