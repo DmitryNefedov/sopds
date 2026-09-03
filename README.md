@@ -28,8 +28,12 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   `/api/search` endpoint also returns a combined overview (`type=all`) or a
   paginated list per entity (`type=books|authors|series`).
 - Browse by catalog tree, author, series, genre, or title prefix.
-- Book detail with cover extraction (embedded FB2 / EPUB covers), annotation,
-  download (raw or zipped).
+- **Metadata & cover extraction** for FB2 (with `windows-1251` / declared-encoding
+  support), EPUB and MOBI — title, authors, series, language, and the embedded
+  cover image (`server/src/books/`). Books without an embedded cover fall back to
+  a generated placeholder (`server/assets/nocover.svg` / `.png`, rebuild with
+  `python3 server/bin/make-nocover.py`).
+- Book detail and downloads (raw or zipped).
 - **On-the-fly format conversion.** Every book is offered as **FB2, EPUB and
   MOBI** even if only one format is on disk. The server converts between the
   three natively (`server/src/convert/`, pure JS — FB2⇄EPUB⇄MOBI, PalmDOC MOBI

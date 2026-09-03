@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseFb2 } from './fb2.js';
 import { parseEpub } from './epub.js';
+import { mobiCover, mobiMeta } from './mobi.js';
 import { getLangCode } from '../lang.js';
 
 // Returns normalised book metadata for a supported file, or a minimal record
@@ -10,6 +11,7 @@ export function parseBook(buf, filename) {
   try {
     if (ext === '.fb2') return normalize(parseFb2(buf), filename);
     if (ext === '.epub') return normalize(parseEpub(buf), filename);
+    if (ext === '.mobi') return normalize(mobiMeta(buf), filename);
   } catch {
     /* fall through to filename-only metadata */
   }
@@ -20,11 +22,19 @@ export function parseBook(buf, filename) {
   );
 }
 
+// Returns { data: Buffer, mime: string } for the embedded cover, or null.
 export function extractCover(buf, filename) {
   const ext = path.extname(filename).toLowerCase();
   try {
-    if (ext === '.fb2') return parseFb2(buf).coverData || null;
-    if (ext === '.epub') return parseEpub(buf).coverData || null;
+    if (ext === '.fb2') {
+      const m = parseFb2(buf);
+      return m.coverData ? { data: m.coverData, mime: m.coverMime || 'image/jpeg' } : null;
+    }
+    if (ext === '.epub') {
+      const m = parseEpub(buf);
+      return m.coverData ? { data: m.coverData, mime: m.coverMime || 'image/jpeg' } : null;
+    }
+    if (ext === '.mobi') return mobiCover(buf);
   } catch {
     /* ignore */
   }

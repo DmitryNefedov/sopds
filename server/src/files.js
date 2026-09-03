@@ -70,7 +70,22 @@ export function translitName(s) {
   return out.replace(/_+/g, '_').replace(/^_|_$/g, '') || 'book';
 }
 
+let _nocover;
 export function nocover() {
-  const p = path.join(config.rootDir, 'assets', 'nocover.jpg');
-  return fs.existsSync(p) ? fs.readFileSync(p) : null;
+  if (_nocover !== undefined) return _nocover;
+  const dir = path.join(config.rootDir, 'assets');
+  const candidates = [
+    ['nocover.png', 'image/png'],
+    ['nocover.svg', 'image/svg+xml'],
+    ['nocover.jpg', 'image/jpeg'],
+  ];
+  for (const [name, type] of candidates) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) {
+      _nocover = { data: fs.readFileSync(p), type };
+      return _nocover;
+    }
+  }
+  _nocover = null;
+  return _nocover;
 }

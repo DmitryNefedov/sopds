@@ -100,16 +100,19 @@ router.get('/books/:id/download', (req, res) => {
 router.get('/books/:id/cover', (req, res) => {
   const book = repo.getBook(Number(req.params.id));
   if (!book) return res.status(404).end();
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+
   const img = readBookCover(book);
-  if (img) {
-    res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    return res.send(img);
+  if (img && img.data && img.data.length) {
+    res.setHeader('Content-Type', img.mime || 'image/jpeg');
+    return res.send(img.data);
   }
+
   const fallback = nocover();
   if (fallback) {
-    res.setHeader('Content-Type', 'image/jpeg');
-    return res.send(fallback);
+    res.setHeader('Content-Type', fallback.type);
+    res.setHeader('X-Cover', 'default');
+    return res.send(fallback.data);
   }
   res.status(404).end();
 });

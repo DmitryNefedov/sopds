@@ -1,4 +1,5 @@
 import sax from 'sax';
+import { decodeXmlBuffer } from '../books/fb2.js';
 import {
   emptyIr,
   escapeXml,
@@ -42,7 +43,7 @@ const INLINE = {
 
 export function fb2ToIr(buf) {
   const ir = emptyIr();
-  const xml = stripBom(buf.toString('utf8'));
+  const xml = decodeXmlBuffer(buf);
   const parser = sax.parser(false, { lowercase: true, trim: false });
 
   const stack = [];
@@ -343,8 +344,4 @@ function extForMime(mime) {
   if (mime === 'image/png') return '.png';
   if (mime === 'image/gif') return '.gif';
   return '.jpg';
-}
-
-function stripBom(s) {
-  return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 }
