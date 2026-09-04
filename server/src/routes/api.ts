@@ -86,7 +86,7 @@ router.get(
     const target = (qstr(req.query.format) || book.format).toLowerCase();
     try {
       if (target !== book.format) {
-        buf = convert(buf, book.format, target, `book:${book.id}`);
+        buf = await convert(buf, book.format, target, `book:${book.id}`);
       }
     } catch (err) {
       const status = err instanceof ConvertError ? err.status : 500;

@@ -120,6 +120,44 @@ test('the total agrees with the rows across pages', async () => {
   assert.equal(past.total, 2);
 });
 
+test('duplicate editions collapse before the page limit, not after', async () => {
+  // Regression: the collapse used to run on the already-paged rows, so a
+  // preview asking for N books could show far fewer and `total` counted
+  // editions the caller never saw.
+  const auth = (await db.get<{ id: number }>(
+    'INSERT INTO authors (full_name, search_full_name, lang_code) VALUES (?, ?, 1) RETURNING id',
+    ['Dupe Author', normalize('Dupe Author')],
+  ))!.id;
+  const mk = async (title: string, fmt: string) => {
+    const id = (await db.get<{ id: number }>(
+      `INSERT INTO books (filename, path, format, title, search_title, lang_code, avail)
+       VALUES (?, 'r', ?, ?, ?, 1, 2) RETURNING id`,
+      [`${title}-${fmt}`, fmt, title, normalize(title)],
+    ))!.id;
+    await db.run('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)', [id, auth]);
+  };
+  // Three distinct titles, each in three formats: 9 editions, 3 distinct books.
+  for (const t of ['Zeta Alpha One', 'Zeta Alpha Two', 'Zeta Alpha Three'])
+    for (const f of ['fb2', 'epub', 'mobi']) await mk(t, f);
+
+  try {
+    const first = await repo.searchBooks('zeta alpha', { page: 1, limit: 2 });
+    assert.equal(first.total, 3, 'total counts distinct books, not editions');
+    assert.equal(first.items.length, 2, 'a full page in spite of the collapsing');
+    assert.equal(first.pages, 2);
+    assert.ok(first.items.every((b) => b.doubles === 2), 'each carries its +2 duplicate count');
+
+    const second = await repo.searchBooks('zeta alpha', { page: 2, limit: 2 });
+    assert.equal(second.items.length, 1);
+    const titles = new Set([...first.items, ...second.items].map((b) => b.title));
+    assert.equal(titles.size, 3, 'the two pages cover every distinct book exactly once');
+  } finally {
+    await db.run('DELETE FROM book_authors WHERE author_id = ?', [auth]);
+    await db.run("DELETE FROM books WHERE title LIKE 'Zeta Alpha %'");
+    await db.run('DELETE FROM authors WHERE id = ?', [auth]);
+  }
+});
+
 test('a query matching nothing reports zero rather than failing', async () => {
   const r = await repo.searchBooks('zzzz-nothing-matches');
   assert.equal(r.total, 0);

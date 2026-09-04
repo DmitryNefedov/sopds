@@ -1,7 +1,7 @@
 import AdmZip from 'adm-zip';
 import sax from 'sax';
 import { ZipWriter } from './zipwriter.js';
-import { emptyIr, escapeXml, extFromMime, mimeFromName, sanitizeHtml } from './ir.js';
+import { balanceHtml, emptyIr, escapeXml, extFromMime, mimeFromName, sanitizeHtml } from './ir.js';
 import type { Ir, IrImage } from './ir.js';
 
 type Attrs = Record<string, string>;
@@ -186,7 +186,7 @@ export function irToEpub(ir: Ir): Buffer {
 <meta charset="utf-8"/><title>${escapeXml(ch.title || ir.title)}</title>
 <link rel="stylesheet" type="text/css" href="../style.css"/>
 </head><body>
-${heading}${fixImgPaths(ch.html)}
+${heading}${balanceHtml(fixImgPaths(ch.html))}
 </body></html>`;
     zip.add(`OEBPS/${file}`, xhtml);
     return { id: `chap-${i + 1}`, file, title: ch.title || `Chapter ${i + 1}` };

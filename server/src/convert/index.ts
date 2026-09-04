@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import config from '../config.js';
 import { S, onChange } from '../settings.js';
 import { fb2ToIr, irToFb2 } from './fb2.js';
@@ -73,26 +74,31 @@ export function converterInfo(): ConverterInfo {
   };
 }
 
-function externalConvert(buf: Buffer, from: string, to: string): Buffer | null {
+const execFileAsync = promisify(execFile);
+
+// Spawned asynchronously on purpose. Calibre takes seconds to tens of seconds
+// per book, and `spawnSync` would hold the event loop for all of it — one
+// download would stall every other request the server is serving, search and
+// covers included. The built-in converters run in milliseconds and hid this.
+async function externalConvert(buf: Buffer, from: string, to: string): Promise<Buffer | null> {
   const bin = externalConverter();
   if (!bin) return null;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sopds-conv-'));
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sopds-conv-'));
   const inFile = path.join(dir, `in.${from}`);
   const outFile = path.join(dir, `out.${to}`);
   try {
-    fs.writeFileSync(inFile, buf);
-    const res = spawnSync(bin, [inFile, outFile], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      timeout: 120000,
-    });
-    if (res.status !== 0 || !fs.existsSync(outFile)) {
-      throw new Error(
-        `ebook-convert failed: ${res.stderr ? res.stderr.toString().slice(0, 500) : res.status}`,
-      );
+    await fs.promises.writeFile(inFile, buf);
+    try {
+      await execFileAsync(bin, [inFile, outFile], { timeout: 120000, maxBuffer: 4 << 20 });
+    } catch (err) {
+      const e = err as { stderr?: string; message?: string };
+      throw new Error(`ebook-convert failed: ${(e.stderr || e.message || '').slice(0, 500)}`);
     }
-    return fs.readFileSync(outFile);
+    // Missing output throws ENOENT, which the caller treats like any other
+    // external failure: fall back to the built-in converters.
+    return await fs.promises.readFile(outFile);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    await fs.promises.rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -110,7 +116,12 @@ const isConvertible = (f: string): f is ConvertFormat =>
 
 // Convert `buf` (a book in `from` format) to `to`. Returns a Buffer.
 // `cacheKey` (optional) enables on-disk caching of the result.
-export function convert(buf: Buffer, from: string, to: string, cacheKey?: string): Buffer {
+export async function convert(
+  buf: Buffer,
+  from: string,
+  to: string,
+  cacheKey?: string,
+): Promise<Buffer> {
   from = String(from || '').toLowerCase();
   to = String(to || '').toLowerCase();
   if (from === to) return buf;
@@ -128,13 +139,16 @@ export function convert(buf: Buffer, from: string, to: string, cacheKey?: string
     ? crypto.createHash('sha1').update(`${cacheKey}:${from}:${to}:${buf.length}`).digest('hex')
     : null;
   if (key) {
-    const p = cachePath(key, to);
-    if (fs.existsSync(p)) return fs.readFileSync(p);
+    try {
+      return await fs.promises.readFile(cachePath(key, to));
+    } catch {
+      /* not cached yet */
+    }
   }
 
   let out: Buffer | null = null;
   try {
-    out = externalConvert(buf, from, to);
+    out = await externalConvert(buf, from, to);
   } catch {
     out = null; // fall back to built-in
   }
@@ -152,7 +166,7 @@ export function convert(buf: Buffer, from: string, to: string, cacheKey?: string
 
   if (key && out) {
     try {
-      fs.writeFileSync(cachePath(key, to), out);
+      await fs.promises.writeFile(cachePath(key, to), out);
     } catch {
       /* cache is best-effort */
     }

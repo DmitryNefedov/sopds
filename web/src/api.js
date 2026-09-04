@@ -39,6 +39,16 @@ export function useApi(pathAndQuery, deps = []) {
     loading: pathAndQuery != null,
     error: null,
   });
+  // When the request path changes, drop the previous result in the same render
+  // that sees the new path. Otherwise a consumer briefly gets stale `data` (or
+  // `null`, if the path was previously skipped) with `loading` still false —
+  // the window between the deps change and the effect below firing — which
+  // makes `<Async>` hand `null` to its render function and throw.
+  const [prevPath, setPrevPath] = useState(pathAndQuery);
+  if (pathAndQuery !== prevPath) {
+    setPrevPath(pathAndQuery);
+    setState({ data: null, loading: pathAndQuery != null, error: null });
+  }
   const idRef = useRef(0);
 
   const load = useCallback(() => {

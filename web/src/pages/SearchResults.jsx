@@ -14,7 +14,7 @@ import {
 import { useApi } from '../api.js';
 import { Async, BookGrid, Empty, ErrorState, Pager } from '../components/common.jsx';
 
-const PREVIEW_LIMIT = 5;
+const PREVIEW_LIMIT = 10;
 
 function AuthorList({ items }) {
   if (!items.length) return <Empty>No matching authors.</Empty>;

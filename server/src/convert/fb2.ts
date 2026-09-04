@@ -18,7 +18,7 @@ const BLOCK_OPEN: Record<string, string> = {
   cite: '<blockquote>',
   poem: '<blockquote>',
   stanza: '<p class="stanza">',
-  v: '<span class="v"></span>',
+  v: '<span class="v">',
   'text-author': '<p class="text-author">',
 };
 const BLOCK_CLOSE: Record<string, string> = {
@@ -28,6 +28,9 @@ const BLOCK_CLOSE: Record<string, string> = {
   cite: '</blockquote>',
   poem: '</blockquote>',
   stanza: '</p>',
+  // A verse is one line: close the span and break, or the whole stanza runs
+  // together as a single paragraph.
+  v: '</span><br/>',
   'text-author': '</p>',
 };
 const INLINE: Record<string, [string, string]> = {
@@ -139,8 +142,14 @@ export function fb2ToIr(buf: Buffer): Ir {
         break;
       }
       default:
+        // A <title> contributes no markup: its text is collected into
+        // `titleText` and re-emitted as the chapter heading. Every tag inside
+        // it has to be dropped at BOTH ends — suppressing the opener while
+        // still writing the closer is what used to leave a stray </p> as the
+        // first thing in the chapter body.
+        if (inTitle) break;
         if (INLINE[name]) html += INLINE[name][0];
-        else if (BLOCK_OPEN[name] !== undefined && !inTitle) html += BLOCK_OPEN[name];
+        else if (BLOCK_OPEN[name] !== undefined) html += BLOCK_OPEN[name];
     }
   };
 
@@ -208,12 +217,20 @@ export function fb2ToIr(buf: Buffer): Ir {
         sectionDepth--;
         if (sectionDepth === 0) flushChapter();
         break;
-      case 'title':
+      case 'title': {
         inTitle = false;
-        if (sectionDepth <= 1 && !pendingTitle) pendingTitle = titleText.trim();
-        else html += `<h2>${escapeXml(titleText.trim())}</h2>`;
+        const t = titleText.replace(/\s+/g, ' ').trim();
+        if (sectionDepth <= 1 && !pendingTitle) pendingTitle = t;
+        else if (t) html += `<h2>${escapeXml(t)}</h2>`;
         break;
+      }
       default:
+        if (inTitle) {
+          // Titles are often several <p>s; keep their text from running
+          // together into one word.
+          if (BLOCK_CLOSE[name] !== undefined) titleText += ' ';
+          break;
+        }
         if (INLINE[name]) html += INLINE[name][1];
         else if (BLOCK_CLOSE[name] !== undefined) html += BLOCK_CLOSE[name];
     }

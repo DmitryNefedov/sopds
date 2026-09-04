@@ -178,18 +178,49 @@ const BOOK_MATCH_IDS = `
   )
 `;
 
+// With "hide doubles" on, editions that share a title and author set collapse
+// to one entry. That has to happen BEFORE the LIMIT — collapsing a single page
+// after the fact returns fewer rows than asked for and leaves `total` counting
+// editions the caller never sees. `dkey`/`akey` are the same identity
+// `hideDoubles` used (upper-cased title + sorted author ids); `DISTINCT ON`
+// keeps the newest edition of each group and the window carries the drop count.
+const BOOK_DEDUP_CTES = `
+  , matched AS (
+      SELECT b.id, b.search_title, b.doc_date, UPPER(b.title) AS dkey,
+             COALESCE(string_agg(CAST(ba.author_id AS text), ',' ORDER BY ba.author_id), '') AS akey
+        FROM books b
+        JOIN ids ON ids.id = b.id
+        LEFT JOIN book_authors ba ON ba.book_id = b.id
+       WHERE b.avail <> 0
+       GROUP BY b.id, b.search_title, b.doc_date, b.title
+    ),
+    grp AS (
+      SELECT DISTINCT ON (dkey, akey)
+             id, COUNT(*) OVER (PARTITION BY dkey, akey) - 1 AS doubles
+        FROM matched
+       ORDER BY dkey, akey, doc_date DESC NULLS LAST, id
+    )`;
+
 export async function searchBooks(q: string, { page = 1, limit }: PageOpts = {}): Promise<Page<Book>> {
   const like = `%${normalize(q)}%`;
   const { page: p, limit: l, offset } = paginate(page, limit);
+  const dedup = S.doublesHide;
+
   // `COUNT(*) OVER ()` rides along with the page, so the match set is built
   // once per search instead of once for the count and again for the rows.
-  const rows = await db.all<BookRow & { total: number }>(
-    `${BOOK_MATCH_IDS}
-     SELECT b.*, COUNT(*) OVER () AS total
-       FROM books b JOIN ids ON ids.id = b.id
-      WHERE b.avail <> 0
-      ORDER BY b.search_title, b.doc_date DESC
-      LIMIT @limit OFFSET @offset`,
+  const rows = await db.all<BookRow & { total: number; doubles: number }>(
+    dedup
+      ? `${BOOK_MATCH_IDS}${BOOK_DEDUP_CTES}
+         SELECT b.*, grp.doubles, COUNT(*) OVER () AS total
+           FROM grp JOIN books b ON b.id = grp.id
+          ORDER BY b.search_title, b.doc_date DESC
+          LIMIT @limit OFFSET @offset`
+      : `${BOOK_MATCH_IDS}
+         SELECT b.*, 0 AS doubles, COUNT(*) OVER () AS total
+           FROM books b JOIN ids ON ids.id = b.id
+          WHERE b.avail <> 0
+          ORDER BY b.search_title, b.doc_date DESC
+          LIMIT @limit OFFSET @offset`,
     { like, limit: l, offset },
   );
   // An offset past the end returns nothing, so fall back to a plain count only
@@ -198,10 +229,18 @@ export async function searchBooks(q: string, { page = 1, limit }: PageOpts = {})
     ? Number(rows[0].total)
     : offset === 0
       ? 0
-      : (await db.get<{ c: number }>(`${BOOK_MATCH_IDS} SELECT COUNT(*) AS c FROM ids`, { like }))!.c;
+      : (await db.get<{ c: number }>(
+          dedup
+            ? `${BOOK_MATCH_IDS}${BOOK_DEDUP_CTES} SELECT COUNT(*) AS c FROM grp`
+            : `${BOOK_MATCH_IDS} SELECT COUNT(*) AS c FROM ids`,
+          { like },
+        ))!.c;
 
-  let items = await hydrateAll(rows);
-  if (S.doublesHide) items = hideDoubles(items);
+  const hydrated = await hydrateAll(rows);
+  // hydrateAll maps over `rows` in order, so index i lines up with rows[i].
+  const items = dedup
+    ? hydrated.map((b, i) => ({ ...b, doubles: Number(rows[i].doubles) }))
+    : hydrated;
   return { items, ...pageMeta(total, p, l) };
 }
 
@@ -262,27 +301,6 @@ export async function searchAll(q: string, { previewLimit = 5 } = {}): Promise<S
     searchBooks(q, { page: 1, limit: previewLimit }),
   ]);
   return { query: q, authors, series, books };
-}
-
-function hideDoubles(items: Book[]): Book[] {
-  const out: Book[] = [];
-  let prevTitle: string | null = null;
-  let prevAuthors: string | null = null;
-  for (const b of items) {
-    const key = b.title.toUpperCase();
-    const authorSet = b.authors
-      .map((a) => a.id)
-      .sort()
-      .join(',');
-    if (key === prevTitle && authorSet === prevAuthors) {
-      out[out.length - 1].doubles = (out[out.length - 1].doubles || 0) + 1;
-    } else {
-      out.push({ ...b, doubles: 0 });
-    }
-    prevTitle = key;
-    prevAuthors = authorSet;
-  }
-  return out;
 }
 
 // ---- browse ------------------------------------------------------------
