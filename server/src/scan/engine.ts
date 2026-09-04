@@ -5,11 +5,10 @@ import path from 'node:path';
 import db, { updateCounters } from '../db.js';
 import type { Query, SqlParam, Tx } from '../db.js';
 import { get as setting } from '../settings.js';
-import { parseBook } from '../books/index.js';
-import { FB2_HEAD_LIMIT, FB2_HEAD_MARKER } from '../books/fb2.js';
+import { parseBook, metaReadPlan, NO_BYTES } from '../books/index.js';
 import { normalize, getLangCode } from '../lang.js';
 import { zipEntries } from '../zip.js';
-import type { ZipLocation } from '../zip.js';
+import type { ZipEntry, ZipLocation } from '../zip.js';
 import type { BookMeta, ScanStats } from '../types.js';
 
 // The collection walk: the raw, unguarded Scan operation. `runOnce()` is called
@@ -484,10 +483,12 @@ class Writer {
 
 // ---- reading a book's metadata header --------------------------------
 
-/** Whole-file formats need the whole file; FB2 only needs its header. */
-async function readLooseHead(abs: string, ext: string, size: number): Promise<Buffer> {
-  if (ext !== '.fb2') return fsp.readFile(abs);
-  const want = Math.min(size, FB2_HEAD_LIMIT);
+/** Read from disk only what this format's parser will actually look at. */
+async function readLooseForMeta(abs: string, filename: string, size: number): Promise<Buffer> {
+  const plan = metaReadPlan(filename);
+  if (plan.need === 'none') return NO_BYTES;
+  if (plan.need === 'all') return fsp.readFile(abs);
+  const want = Math.min(size, plan.limit);
   const fh = await fsp.open(abs, 'r');
   try {
     const buf = Buffer.allocUnsafe(want);
@@ -496,6 +497,15 @@ async function readLooseHead(abs: string, ext: string, size: number): Promise<Bu
   } finally {
     await fh.close();
   }
+}
+
+/** The same, for an entry inside an archive: a head read stops the inflater
+ *  early, and a format we cannot introspect is never inflated at all. */
+function readEntryForMeta(entry: ZipEntry, filename: string): Promise<Buffer> {
+  const plan = metaReadPlan(filename);
+  if (plan.need === 'none') return Promise.resolve(NO_BYTES);
+  if (plan.need === 'all') return entry.read();
+  return entry.readHead(plan.limit, plan.stopAt);
 }
 
 // ---- the walk ---------------------------------------------------------
@@ -572,8 +582,7 @@ async function processDir(
     const abs = path.join(task.abs, filename);
     try {
       const size = (await fsp.stat(abs)).size;
-      const ext = path.extname(filename).toLowerCase();
-      const buf = await readLooseHead(abs, ext, size);
+      const buf = await readLooseForMeta(abs, filename, size);
       await writer.add({
         filename,
         relDir,
@@ -623,10 +632,7 @@ async function processZip(
         continue;
       }
       try {
-        const buf =
-          ext === '.fb2'
-            ? await entry.readHead(FB2_HEAD_LIMIT, FB2_HEAD_MARKER)
-            : await entry.read();
+        const buf = await readEntryForMeta(entry, entry.name);
         await writer.add({
           filename: entry.name,
           relDir: relZip,

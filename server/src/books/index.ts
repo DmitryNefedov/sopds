@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { parseFb2, fb2Cover } from './fb2.js';
+import { parseFb2, fb2Cover, FB2_HEAD_LIMIT, FB2_HEAD_MARKER } from './fb2.js';
 import { parseEpub } from './epub.js';
 import { mobiCover, mobiMeta } from './mobi.js';
 import { getLangCode } from '../lang.js';
@@ -18,6 +18,41 @@ export interface RawMeta {
   coverData?: Buffer | null;
   coverMime?: string;
 }
+
+/**
+ * How much of a file `parseBook` needs to see. The scan reads exactly this and
+ * no more — on a collection of 500 KB books that is the difference between
+ * inflating the whole thing and touching a couple of KB.
+ *
+ *   fb2   the metadata is the leading <description>; stop at its closing tag.
+ *   mobi  the metadata is in PalmDB record 0, at the front of the file.
+ *   epub  a zip, whose central directory is at the *end* — no shortcut.
+ *   else  we have no parser, so the metadata comes from the filename and the
+ *         bytes are never looked at.
+ */
+export type ReadPlan =
+  | { need: 'none' }
+  | { need: 'head'; limit: number; stopAt?: Buffer }
+  | { need: 'all' };
+
+/** MOBI record 0 (header + EXTH) is a few KB in practice; this is slack. */
+export const MOBI_HEAD_LIMIT = 256 * 1024;
+
+export function metaReadPlan(filename: string): ReadPlan {
+  switch (path.extname(filename).toLowerCase()) {
+    case '.fb2':
+      return { need: 'head', limit: FB2_HEAD_LIMIT, stopAt: FB2_HEAD_MARKER };
+    case '.mobi':
+      return { need: 'head', limit: MOBI_HEAD_LIMIT };
+    case '.epub':
+      return { need: 'all' };
+    default:
+      return { need: 'none' };
+  }
+}
+
+/** Passed to `parseBook` for a `need: 'none'` format, which never reads it. */
+export const NO_BYTES = Buffer.alloc(0);
 
 export interface ParseOptions {
   /**

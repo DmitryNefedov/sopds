@@ -36,13 +36,14 @@ term; this file is the prose.
   since the last scan is skipped without being reopened. The raw one-shot is
   `scan/engine.ts` `runOnce()` (the CLI and the tests call it directly); the
   server always goes through the **Scanner**.
-- **Metadata header** — the only part of a book file a scan reads. For FB2 that
-  is the bytes up to `</description>`; the body and the base64 `<binary>` cover
-  after it are never inflated and never parsed
-  (`parseBook(buf, name, { metaOnly: true })` on top of `zip.ts` `readHead`).
-  Covers are re-read from the file on demand by `files.ts` `readBookCover`, so
-  nothing is lost — and a walk of a 700k fb2-in-zip collection costs roughly a
-  twentieth of what reading each file whole did.
+- **Read plan** (`books/metaReadPlan`) — how much of a file a scan reads, per
+  format, so the walk never inflates bytes no parser will look at. `fb2` stops
+  at `</description>`; `mobi` takes the front of the file (PalmDB record 0);
+  `epub` has to be read whole (it is a zip, central directory last); anything
+  else (`pdf`, `djvu`) is catalogued from its filename and never read at all.
+  Combined with `metaOnly` — which also skips decoding the cover — this is what
+  makes a 700k-book walk cheap. Covers are re-read on demand by `files.ts`
+  `readBookCover`, so nothing is lost.
 - **Bulk write** — the scan's unit of database work. Up to 500 parsed books go
   out as one `INSERT … SELECT * FROM UNNEST(…) ON CONFLICT` per table, and a
   directory's or archive's already-known filenames arrive in a single query, so
