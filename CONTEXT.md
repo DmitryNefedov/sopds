@@ -25,8 +25,16 @@ term; this file is the prose.
 ## Operations
 
 - **Unified search** — one query matches a Book by its own title, *any* of its
-  authors, or *any* of its series (`BOOK_MATCH_FROM` in `repo.ts`).
-  `type=all|books|authors|series` on `GET /api/search`.
+  authors, or *any* of its series (`BOOK_MATCH_IDS` in `repo.ts`, which collects
+  matching book ids from each side and unions them rather than joining all three
+  and de-duplicating afterwards). `type=all|books|authors|series` on
+  `GET /api/search`; the overview page issues one request per type in parallel
+  and paints each section as its own results arrive, books first.
+  Text matching is `LIKE '%…%'`, which no btree index can serve, so `db.ts`
+  `ensureSearchIndexes()` creates GIN trigram indexes in the background after
+  the port opens — best-effort, since PGlite has no `pg_trgm`.
+- **Batched hydration** — `repo.hydrateAll` loads a whole page's authors,
+  genres and series with three `= ANY(...)` queries instead of three per book.
 - **Scan** — walk the collection, upsert Books/Authors/Series/Genres, mark
   vanished files unavailable. Produces `ScanStats`. Commits in batches of
   `scanBatchSize` (default 10 000) via `db.begin()`, so books are published to

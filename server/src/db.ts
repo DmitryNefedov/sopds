@@ -225,6 +225,62 @@ export function initSchema(): Promise<void> {
   return schemaReady;
 }
 
+// Search is `LIKE '%text%'`, which a btree index cannot help with at all — the
+// leading wildcard forces a sequential scan of every author, series and title.
+// A GIN trigram index does serve it, and on a 1M-book catalog that is the
+// difference between seconds and milliseconds.
+//
+// pg_trgm ships with PostgreSQL but not with PGlite (the in-process build the
+// tests run against), and creating an extension needs rights a locked-down role
+// may not have. So this is best-effort: without the indexes every query returns
+// exactly the same rows, just more slowly.
+//
+// Two things make this a background job rather than part of startup. Building a
+// GIN index over a million titles takes minutes, and `initSchema()` runs before
+// the HTTP port opens — waiting for it would fail the container's healthcheck.
+// CONCURRENTLY then keeps the table readable and writable while it builds, at
+// the cost of not being allowed inside a transaction (hence `backend.query`,
+// which runs on the pool).
+const TRIGRAM_INDEXES: [string, string, string][] = [
+  ['idx_books_title_trgm', 'books', 'search_title'],
+  ['idx_authors_name_trgm', 'authors', 'search_full_name'],
+  ['idx_series_ser_trgm', 'series', 'search_ser'],
+];
+
+/** Create the text-search indexes if this database can have them. Safe to call
+ *  on every boot: each statement is a no-op once the index exists. */
+export async function ensureSearchIndexes(log = console.log): Promise<boolean> {
+  const why = (err: unknown) => String((err as Error).message).split('\n')[0];
+  try {
+    await backend.query('CREATE EXTENSION IF NOT EXISTS pg_trgm', []);
+  } catch (err) {
+    log(
+      `search: pg_trgm unavailable (${why(err)}); ` +
+        'text search falls back to sequential scans',
+    );
+    return false;
+  }
+  for (const [name, table, column] of TRIGRAM_INDEXES) {
+    const started = Date.now();
+    try {
+      await backend.query(
+        `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name}
+           ON ${table} USING gin (${column} gin_trgm_ops)`,
+        [],
+      );
+      const secs = (Date.now() - started) / 1000;
+      if (secs > 1) log(`search: built ${name} in ${secs.toFixed(0)}s`);
+    } catch (err) {
+      // A cancelled CONCURRENTLY build leaves an invalid index behind, which
+      // `IF NOT EXISTS` would then skip forever — say so rather than fail quietly.
+      log(`search: could not build ${name}: ${why(err)} (DROP INDEX ${name} to retry)`);
+      return false;
+    }
+  }
+  await backend.query('ANALYZE books, authors, series', []).catch(() => {});
+  return true;
+}
+
 async function waitForPostgres(attempts = 30, delayMs = 1000): Promise<void> {
   for (let i = 1; i <= attempts; i++) {
     try {

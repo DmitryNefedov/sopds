@@ -31,11 +31,22 @@ export const bookDownloadUrl = (id, zip = false) =>
 export const bookCoverUrl = (id) => `${BASE}/api/books/${id}/cover`;
 
 // Minimal data-fetching hook with request cancellation and a manual `reload`.
+// Pass `null` as the path to skip the request entirely — hooks have to be
+// called unconditionally, so this is how a component asks for nothing.
 export function useApi(pathAndQuery, deps = []) {
-  const [state, setState] = useState({ data: null, loading: true, error: null });
+  const [state, setState] = useState({
+    data: null,
+    loading: pathAndQuery != null,
+    error: null,
+  });
   const idRef = useRef(0);
 
   const load = useCallback(() => {
+    if (pathAndQuery == null) {
+      idRef.current++;
+      setState({ data: null, loading: false, error: null });
+      return;
+    }
     const reqId = ++idRef.current;
     setState((s) => ({ ...s, loading: true, error: null }));
     apiGet(pathAndQuery)

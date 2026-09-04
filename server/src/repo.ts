@@ -1,4 +1,5 @@
 import db from './db.js';
+import type { SqlParam } from './db.js';
 import type { BookRef } from './files.js';
 import { S } from './settings.js';
 import { normalize } from './lang.js';
@@ -48,6 +49,42 @@ export async function hydrateBook(row: BookRow | undefined): Promise<Book | null
     db.all<Book['genres'][number]>(GENRES_SQL, [row.id]),
     db.all<Book['series'][number]>(SERIES_SQL, [row.id]),
   ]);
+  return assemble(row, authors, genres, series);
+}
+
+// ---- batched hydration -----------------------------------------------------
+// A page of books used to cost three queries per book — 60 round trips for a
+// listing of 20, which over a network dominated the listing itself. These fetch
+// all three relations for the whole page at once and group them in memory.
+
+const AUTHORS_BATCH = `SELECT ba.book_id, a.id, a.full_name FROM authors a
+   JOIN book_authors ba ON ba.author_id = a.id
+   WHERE ba.book_id = ANY($1::int[]) ORDER BY a.full_name`;
+const GENRES_BATCH = `SELECT bg.book_id, g.id, g.genre, g.section, g.subsection FROM genres g
+   JOIN book_genres bg ON bg.genre_id = g.id
+   WHERE bg.book_id = ANY($1::int[]) ORDER BY g.subsection`;
+const SERIES_BATCH = `SELECT bs.book_id, s.id, s.ser, bs.ser_no FROM series s
+   JOIN book_series bs ON bs.ser_id = s.id
+   WHERE bs.book_id = ANY($1::int[]) ORDER BY bs.ser_no`;
+
+/** Group rows carrying a `book_id` by that id, dropping the key from each row. */
+function groupByBook<T extends { book_id: number }>(rows: T[]): Map<number, Omit<T, 'book_id'>[]> {
+  const out = new Map<number, Omit<T, 'book_id'>[]>();
+  for (const row of rows) {
+    const { book_id: id, ...rest } = row;
+    const list = out.get(id);
+    if (list) list.push(rest);
+    else out.set(id, [rest]);
+  }
+  return out;
+}
+
+function assemble(
+  row: BookRow,
+  authors: Book['authors'],
+  genres: Book['genres'],
+  series: Book['series'],
+): Book {
   return {
     id: row.id,
     title: row.title,
@@ -71,8 +108,28 @@ export async function hydrateBook(row: BookRow | undefined): Promise<Book | null
   };
 }
 
-const hydrateAll = async (rows: BookRow[]): Promise<Book[]> =>
-  (await Promise.all(rows.map(hydrateBook))).filter((b): b is Book => b !== null);
+/** Hydrate a whole page of books with three queries, not three per book. */
+export const hydrateAll = async (rows: BookRow[]): Promise<Book[]> => {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id) as unknown as SqlParam;
+  const [authors, genres, series] = await Promise.all([
+    db.all<Book['authors'][number] & { book_id: number }>(AUTHORS_BATCH, [ids]),
+    db.all<Book['genres'][number] & { book_id: number }>(GENRES_BATCH, [ids]),
+    db.all<Book['series'][number] & { book_id: number }>(SERIES_BATCH, [ids]),
+  ]);
+  const byAuthor = groupByBook(authors);
+  const byGenre = groupByBook(genres);
+  const bySeries = groupByBook(series);
+  const empty: never[] = [];
+  return rows.map((row) =>
+    assemble(
+      row,
+      (byAuthor.get(row.id) ?? empty) as Book['authors'],
+      (byGenre.get(row.id) ?? empty) as Book['genres'],
+      (bySeries.get(row.id) ?? empty) as Book['series'],
+    ),
+  );
+};
 
 function stripTags(s: string): string {
   return s.replace(/<[^>]*>/g, '').trim();
@@ -99,28 +156,50 @@ function pageMeta(total: number, page: number, limit: number): PageMeta {
 
 // A book matches when the query hits its title, ANY of its authors, or ANY of
 // its series. This is the cross-entity "one query" search.
-const BOOK_MATCH_FROM = `
-  FROM books b
-  LEFT JOIN book_authors ba ON ba.book_id = b.id
-  LEFT JOIN authors a ON a.id = ba.author_id
-  LEFT JOIN book_series bs ON bs.book_id = b.id
-  LEFT JOIN series s ON s.id = bs.ser_id
-  WHERE b.avail <> 0
-    AND (b.search_title LIKE @like OR a.search_full_name LIKE @like OR s.search_ser LIKE @like)
+//
+// The obvious shape — LEFT JOIN books to authors and series and filter on all
+// three — makes Postgres build the full join before it can apply DISTINCT, so a
+// query touching a common word walked millions of joined rows twice (once to
+// count, once to page). Collecting matching book ids from each side first and
+// joining `books` once afterwards keeps every branch on the small side of its
+// relation: on 120k books that took the books half of a search from 1.36 s to
+// 147 ms, and it scales with the number of matches rather than the catalog.
+const BOOK_MATCH_IDS = `
+  WITH ids AS (
+      SELECT b.id FROM books b WHERE b.avail <> 0 AND b.search_title LIKE @like
+    UNION
+      SELECT ba.book_id FROM authors a
+        JOIN book_authors ba ON ba.author_id = a.id
+       WHERE a.search_full_name LIKE @like
+    UNION
+      SELECT bs.book_id FROM series s
+        JOIN book_series bs ON bs.ser_id = s.id
+       WHERE s.search_ser LIKE @like
+  )
 `;
 
 export async function searchBooks(q: string, { page = 1, limit }: PageOpts = {}): Promise<Page<Book>> {
   const like = `%${normalize(q)}%`;
   const { page: p, limit: l, offset } = paginate(page, limit);
-  const total = (
-    await db.get<{ c: number }>(`SELECT COUNT(DISTINCT b.id) AS c ${BOOK_MATCH_FROM}`, { like })
-  )!.c;
-  const rows = await db.all<BookRow>(
-    `SELECT DISTINCT b.* ${BOOK_MATCH_FROM}
-     ORDER BY b.search_title, b.doc_date DESC
-     LIMIT @limit OFFSET @offset`,
+  // `COUNT(*) OVER ()` rides along with the page, so the match set is built
+  // once per search instead of once for the count and again for the rows.
+  const rows = await db.all<BookRow & { total: number }>(
+    `${BOOK_MATCH_IDS}
+     SELECT b.*, COUNT(*) OVER () AS total
+       FROM books b JOIN ids ON ids.id = b.id
+      WHERE b.avail <> 0
+      ORDER BY b.search_title, b.doc_date DESC
+      LIMIT @limit OFFSET @offset`,
     { like, limit: l, offset },
   );
+  // An offset past the end returns nothing, so fall back to a plain count only
+  // in that case rather than on every search.
+  const total = rows.length
+    ? Number(rows[0].total)
+    : offset === 0
+      ? 0
+      : (await db.get<{ c: number }>(`${BOOK_MATCH_IDS} SELECT COUNT(*) AS c FROM ids`, { like }))!.c;
+
   let items = await hydrateAll(rows);
   if (S.doublesHide) items = hideDoubles(items);
   return { items, ...pageMeta(total, p, l) };

@@ -7,7 +7,7 @@ import cors from 'cors';
 import compression from 'compression';
 import morgan from 'morgan';
 import config from './config.js';
-import db, { initSchema, updateCounters } from './db.js';
+import db, { ensureSearchIndexes, initSchema, updateCounters } from './db.js';
 import { S, loadSettings } from './settings.js';
 import { Scanner } from './scan/index.js';
 import apiRoutes from './routes/api.js';
@@ -90,6 +90,10 @@ async function main(): Promise<void> {
       `  database:        postgres ${config.db.url || `${config.db.host}:${config.db.port}/${config.db.database}`}`,
     );
     Scanner.start();
+    // Text-search indexes are built after the port is open: on a large catalog
+    // this takes minutes, and nothing should wait on it — searches work
+    // throughout, just more slowly until it finishes.
+    void ensureSearchIndexes();
     if (S.scanEnabled) console.log(`  scheduled scan:  ${S.scanCron}`);
     if (S.watchEnabled) console.log(`  watching:        ${S.rootLib}`);
   });
