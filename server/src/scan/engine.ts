@@ -407,7 +407,11 @@ class Writer {
     if (!this.pending.length) return;
     const rows = this.pending;
     this.pending = [];
-    this.added += await this.serial((cx) => insertBooks(cx, rows));
+    // Read the counter *after* the await: `this.added += await …` would capture
+    // the old value first, and with concurrent readers a second chunk finishing
+    // in between would then overwrite this one's increment.
+    const inserted = await this.serial((cx) => insertBooks(cx, rows));
+    this.added += inserted;
     await this.progressed(rows.length);
   }
 
