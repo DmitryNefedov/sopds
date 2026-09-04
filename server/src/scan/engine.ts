@@ -9,6 +9,7 @@ import { parseBook } from '../books/index.js';
 import { FB2_HEAD_LIMIT, FB2_HEAD_MARKER } from '../books/fb2.js';
 import { normalize, getLangCode } from '../lang.js';
 import { zipEntries } from '../zip.js';
+import type { ZipLocation } from '../zip.js';
 import type { BookMeta, ScanStats } from '../types.js';
 
 // The collection walk: the raw, unguarded Scan operation. `runOnce()` is called
@@ -180,6 +181,8 @@ interface PendingBook {
   catType: number;
   filesize: number;
   meta: BookMeta;
+  /** Where the entry sits in its archive; absent for loose files. */
+  loc?: ZipLocation;
 }
 
 const bookKey = (relDir: string, filename: string): string => `${relDir}\u0000${filename}`;
@@ -206,11 +209,16 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
 
   const written = await cx.all<{ id: number; path: string; filename: string; inserted: boolean }>(
     `INSERT INTO books (filename, path, filesize, format, catalog_id, cat_type,
-        doc_date, lang, title, search_title, annotation, lang_code, avail)
+        doc_date, lang, title, search_title, annotation, lang_code,
+        zip_offset, zip_csize, zip_method, avail)
      SELECT *, 2 FROM UNNEST(
         $1::text[], $2::text[], $3::bigint[], $4::text[], $5::int[], $6::int[],
-        $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::int[])
-     ON CONFLICT (path, filename) DO UPDATE SET avail = 2
+        $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::int[],
+        $13::bigint[], $14::bigint[], $15::int[])
+     ON CONFLICT (path, filename) DO UPDATE SET avail = 2,
+        zip_offset = EXCLUDED.zip_offset,
+        zip_csize  = EXCLUDED.zip_csize,
+        zip_method = EXCLUDED.zip_method
      RETURNING id, path, filename, (xmax = 0) AS inserted`,
     arr(
       books.map((b) => b.filename),
@@ -225,6 +233,9 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
       books.map((b) => normalize(b.meta.title)),
       books.map((b) => b.meta.annotation || ''),
       books.map((b) => b.meta.langCode),
+      books.map((b) => b.loc?.offset ?? null),
+      books.map((b) => b.loc?.csize ?? null),
+      books.map((b) => b.loc?.method ?? null),
     ),
   );
 
@@ -353,6 +364,35 @@ class Writer {
           relPath,
           slice,
         ]),
+      );
+    }
+  }
+
+  /**
+   * Re-mark known entries of an archive we are re-reading, and refresh where
+   * they live: the archive changed since the last scan, so recorded offsets
+   * cannot be trusted even for entries whose metadata we are not re-parsing.
+   */
+  async markSeenAt(relPath: string, seen: { name: string; loc: ZipLocation }[]): Promise<void> {
+    for (let i = 0; i < seen.length; i += 1000) {
+      const slice = seen.slice(i, i + 1000);
+      await this.serial((cx) =>
+        cx.run(
+          `UPDATE books b SET avail = 2, zip_offset = u.off,
+              zip_csize = u.csize, zip_method = u.method
+           FROM UNNEST($2::text[], $3::bigint[], $4::bigint[], $5::int[])
+                AS u(name, off, csize, method)
+           WHERE b.path = $1 AND b.filename = u.name`,
+          [
+            relPath,
+            ...arr(
+              slice.map((e) => e.name),
+              slice.map((e) => e.loc.offset),
+              slice.map((e) => e.loc.csize),
+              slice.map((e) => e.loc.method),
+            ),
+          ],
+        ),
       );
     }
   }
@@ -570,14 +610,15 @@ async function processZip(
   const catalogId = await writer.beginArchive(relZip);
   stats.archives++;
   const known = await writer.knownFilenames(relZip);
-  const seen: string[] = [];
+  const seen: { name: string; loc: ZipLocation }[] = [];
 
   try {
     for await (const entry of zipEntries(abs)) {
       const ext = path.extname(entry.name).toLowerCase();
       if (!CTX.bookExtensions.includes(ext)) continue;
+      const loc: ZipLocation = { offset: entry.offset, csize: entry.csize, method: entry.method };
       if (known.has(entry.name)) {
-        seen.push(entry.name);
+        seen.push({ name: entry.name, loc });
         stats.skipped++;
         continue;
       }
@@ -593,6 +634,7 @@ async function processZip(
           catType: CAT_ZIP,
           filesize: entry.size,
           meta: parseBook(buf, path.basename(entry.name), { metaOnly: true }),
+          loc,
         });
       } catch (err) {
         stats.bad++;
@@ -611,7 +653,7 @@ async function processZip(
     // deletes them. (Ones we never reached are left pending, as before: the
     // archive keeps `cat_size = 0`, so the next run reads it again.)
     if (seen.length) {
-      await writer.markSeen(relZip, seen);
+      await writer.markSeenAt(relZip, seen);
       await writer.progressed(seen.length);
     }
   }

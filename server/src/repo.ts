@@ -1,4 +1,5 @@
 import db from './db.js';
+import type { BookRef } from './files.js';
 import { S } from './settings.js';
 import { normalize } from './lang.js';
 import type {
@@ -61,6 +62,9 @@ export async function hydrateBook(row: BookRow | undefined): Promise<Book | null
     register_date: row.register_date,
     annotation: stripTags(row.annotation || ''),
     catalog_id: row.catalog_id,
+    zip_offset: row.zip_offset ?? null,
+    zip_csize: row.zip_csize ?? null,
+    zip_method: row.zip_method ?? null,
     authors,
     genres,
     series,
@@ -203,6 +207,14 @@ function hideDoubles(items: Book[]): Book[] {
 }
 
 // ---- browse ------------------------------------------------------------
+
+/** Just enough of a book to read its bytes — no author/genre/series joins. */
+export function getBookRef(id: number): Promise<BookRef | undefined> {
+  return db.get<BookRef>(
+    'SELECT path, filename, cat_type, zip_offset, zip_csize, zip_method FROM books WHERE id = ?',
+    [id],
+  );
+}
 
 export async function getBook(id: number): Promise<Book | null> {
   return hydrateBook(await db.get<BookRow>('SELECT * FROM books WHERE id = ?', [id]));

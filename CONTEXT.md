@@ -70,8 +70,17 @@ term; this file is the prose.
   folder-watch (`scan/watch.ts`), a single concurrency mutex that queues one
   follow-up run (last reason wins), and the run / progress / last-run state
   (`__state.lastScan`). `GET/POST /api/admin/scan` is its only HTTP surface.
+- **Zip location** (`books.zip_offset` / `zip_csize` / `zip_method`) — where a
+  book's bytes start inside its archive, recorded by the scan. Finding an entry
+  by name means walking the archive's central directory, which is O(entries)
+  and costs ~75 ms on a 2500-book archive — far more than inflating the book.
+  With a location, `files.ts` `readBookBytes` seeks straight to it (~2 ms).
+  NULL means "look it up by name", which is also the fallback when the recorded
+  offset no longer holds a local file header, so a rewritten archive degrades
+  instead of breaking. `bin/reindex-zips.ts` backfills a catalog scanned before
+  these existed, reading central directories only.
 - **`zip.ts`** — streaming read access to `.zip` archives (`zipEntries` async
-  iterator, `readZipEntry`). Used by the scanner and by book downloads so a
+  iterator, `readZipEntry`, `readZipEntryAt`, `zipLocations`). Used by the scanner and by book downloads so a
   huge archive is never expanded or fully buffered. `adm-zip` is still used for
   the small in-memory cases (parsing one epub, building a one-file download zip).
 - **`Settings`** (`settings.ts`) — runtime-editable config, read synchronously

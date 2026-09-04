@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { parseFb2 } from './fb2.js';
+import { parseFb2, fb2Cover } from './fb2.js';
 import { parseEpub } from './epub.js';
 import { mobiCover, mobiMeta } from './mobi.js';
 import { getLangCode } from '../lang.js';
@@ -53,6 +53,10 @@ export function extractCover(buf: Buffer, filename: string): CoverImage | null {
   const ext = path.extname(filename).toLowerCase();
   try {
     if (ext === '.fb2') {
+      // The byte scan handles the overwhelming majority; parseFb2 is the
+      // fallback for files it cannot make sense of.
+      const quick = fb2Cover(buf);
+      if (quick) return quick;
       const m = parseFb2(buf);
       return m.coverData ? { data: m.coverData, mime: m.coverMime || 'image/jpeg' } : null;
     }

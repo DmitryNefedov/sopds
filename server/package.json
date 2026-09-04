@@ -11,7 +11,8 @@
     "scan": "tsx bin/scan.ts",
     "initdb": "tsx bin/initdb.ts",
     "typecheck": "tsc --noEmit",
-    "test": "SOPDS_TEST_DB=mem tsx --test \"test/*.test.ts\""
+    "test": "SOPDS_TEST_DB=mem tsx --test \"test/*.test.ts\"",
+    "reindex": "tsx bin/reindex-zips.ts"
   },
   "engines": {
     "node": ">=20"

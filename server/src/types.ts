@@ -23,6 +23,11 @@ export interface BookRow {
   annotation: string;
   lang_code: number;
   avail: number;
+  /** Location of the entry inside its `.zip` (see schema.sql); null for loose
+   *  files and for rows catalogued before the scan recorded them. */
+  zip_offset: number | null;
+  zip_csize: number | null;
+  zip_method: number | null;
   /** present when the query joins `book_series` */
   ser_no?: number;
 }
@@ -62,6 +67,11 @@ export interface Book {
   register_date: Date | string;
   annotation: string;
   catalog_id: number | null;
+  /** Where the entry lives inside its `.zip` (see `BookRow`); null for loose
+   *  files and for rows catalogued before the scan recorded it. */
+  zip_offset: number | null;
+  zip_csize: number | null;
+  zip_method: number | null;
   authors: BookAuthor[];
   genres: BookGenre[];
   series: BookSeries[];

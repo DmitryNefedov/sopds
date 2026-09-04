@@ -109,7 +109,8 @@ router.get(
 router.get(
   '/books/:id/cover',
   ah(async (req, res) => {
-    const book = await repo.getBook(Number(req.params.id));
+    // A cover only needs the bytes, so skip the author/genre/series joins.
+    const book = await repo.getBookRef(Number(req.params.id));
     if (!book) return res.status(404).end();
     res.setHeader('Cache-Control', 'public, max-age=86400');
 

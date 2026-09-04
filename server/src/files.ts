@@ -5,8 +5,8 @@ import AdmZip from 'adm-zip';
 import config from './config.js';
 import { S } from './settings.js';
 import { extractCover } from './books/index.js';
-import { readZipEntry } from './zip.js';
-import type { Book, CoverImage } from './types.js';
+import { readZipEntry, readZipEntryAt } from './zip.js';
+import type { Book, BookRow, CoverImage } from './types.js';
 
 const CAT_NORMAL = 0;
 
@@ -23,8 +23,11 @@ export function mimeFor(fmt: string): string {
   return MIME[fmt] || 'application/octet-stream';
 }
 
-/** A book identified by just the fields needed to locate its bytes on disk. */
-type BookRef = Pick<Book, 'path' | 'filename' | 'cat_type'>;
+/** A book identified by just the fields needed to locate its bytes on disk.
+ *  The `zip_*` columns are optional: rows catalogued before the scan recorded
+ *  them simply take the slower path. */
+export type BookRef = Pick<Book, 'path' | 'filename' | 'cat_type'> &
+  Partial<Pick<BookRow, 'zip_offset' | 'zip_csize' | 'zip_method'>>;
 
 // Returns a Buffer with the raw book bytes, or throws if the file is missing.
 // For books inside a .zip only the requested entry is inflated — the archive is
@@ -34,7 +37,20 @@ export async function readBookBytes(book: BookRef): Promise<Buffer> {
   if (book.cat_type === CAT_NORMAL) {
     return fs.promises.readFile(path.join(full, book.filename));
   }
-  // zip archive: book.path is the archive, book.filename the entry
+  // zip archive: book.path is the archive, book.filename the entry.
+  // With a recorded location we seek straight to it; without one we have to
+  // walk the central directory, which costs O(entries in the archive).
+  if (book.zip_offset != null && book.zip_csize != null && book.zip_method != null) {
+    try {
+      return await readZipEntryAt(full, {
+        offset: Number(book.zip_offset),
+        csize: Number(book.zip_csize),
+        method: Number(book.zip_method),
+      });
+    } catch {
+      // Archive rewritten since the scan: fall through and look it up by name.
+    }
+  }
   return readZipEntry(full, book.filename);
 }
 
