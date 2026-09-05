@@ -2,7 +2,7 @@
 // Generates a small sample book collection (FB2) for local testing / demos.
 import fs from 'node:fs';
 import path from 'node:path';
-import config from '../src/config.js';
+import config from '../src/config/index.js';
 
 const dir = process.argv[2] || config.rootLib;
 fs.mkdirSync(path.join(dir, 'russian'), { recursive: true });

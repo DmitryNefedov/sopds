@@ -16,9 +16,10 @@ const books = path.join(tmp, 'books');
 fs.mkdirSync(books, { recursive: true });
 process.env.SOPDS_ROOT_LIB = books;
 
-const { default: db, initSchema } = await import('../src/db.js');
-const settings = await import('../src/settings.js');
-const { Scanner } = await import('../src/scan/index.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema } = await import('../src/db/schema.js');
+const settings = await import('../src/services/settings.js');
+const { Scanner } = await import('../src/services/scanner/index.js');
 
 const FB2 = (title: string) => `<?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">

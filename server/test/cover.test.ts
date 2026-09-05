@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
-import { extractCover, parseBook } from '../src/books/index.js';
-import { decodeXmlBuffer } from '../src/books/fb2.js';
+import { extractCover, parseBook } from '../src/formats/index.js';
+import { decodeXmlBuffer } from '../src/formats/fb2.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIX = path.join(__dirname, 'fixtures');
@@ -141,7 +141,7 @@ test('epub: resolves a cover path that uses ../', () => {
 
 test('mobi: extracts the cover from a converted file', async () => {
   // Build a real MOBI (with an embedded cover) via the converter, then read it back.
-  const { irToMobi } = await import('../src/convert/mobi.js');
+  const { irToMobi } = await import('../src/services/convert/mobi.js');
   const mobi = irToMobi({
     title: 'M',
     language: 'en',

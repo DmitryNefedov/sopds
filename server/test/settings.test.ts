@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 // Run against the in-process PostgreSQL (PGlite) unless told otherwise.
 process.env.SOPDS_TEST_DB ??= 'mem';
 
-const { default: db, initSchema } = await import('../src/db.js');
-const settings = await import('../src/settings.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema } = await import('../src/db/schema.js');
+const settings = await import('../src/services/settings.js');
 
 before(async () => {
   await initSchema();

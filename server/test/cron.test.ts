@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidCron, cronMatches } from '../src/cron.js';
+import { isValidCron, cronMatches } from '../src/utils/cron.js';
 
 test('cron matching honours fields, lists, ranges and steps', () => {
   const at = (s: string) => new Date(`2024-01-08T${s}:00`); // Monday

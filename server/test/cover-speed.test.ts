@@ -5,11 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 
-// Serving a cover used to walk the archive's central directory to find the
-// entry (O(entries)) and then SAX-parse the whole book. The scan now records
-// where each entry lives and the cover is sliced out by byte offset. These
-// check that both shortcuts produce exactly what the old path did, and that
-// each still works when its shortcut is unavailable.
+// Serving a cover used to walk the archive's central directory (O(entries)) and
+// SAX-parse the whole book; now the scan records each entry's location and the
+// cover is sliced out by byte offset. These check both shortcuts against the old
+// path, and that each still works when its shortcut is unavailable.
 
 process.env.SOPDS_TEST_DB ??= 'mem';
 
@@ -18,12 +17,13 @@ const lib = path.join(tmp, 'books');
 fs.mkdirSync(lib, { recursive: true });
 process.env.SOPDS_ROOT_LIB = lib;
 
-const { default: db, initSchema } = await import('../src/db.js');
-const settings = await import('../src/settings.js');
-const { runOnce } = await import('../src/scan/engine.js');
-const { readBookBytes, readBookCover } = await import('../src/files.js');
-const { parseFb2, fb2Cover } = await import('../src/books/fb2.js');
-const { zipLocations, readZipEntryAt } = await import('../src/zip.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema } = await import('../src/db/schema.js');
+const settings = await import('../src/services/settings.js');
+const { runOnce } = await import('../src/services/scanner/engine.js');
+const { readBookBytes, readBookCover } = await import('../src/connectors/bookfiles.js');
+const { parseFb2, fb2Cover } = await import('../src/formats/fb2.js');
+const { zipLocations, readZipEntryAt } = await import('../src/connectors/zip.js');
 
 const jpeg = (seed: number): Buffer => {
   const b = Buffer.alloc(600 + seed);

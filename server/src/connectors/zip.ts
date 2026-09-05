@@ -3,13 +3,9 @@ import zlib from 'node:zlib';
 import yauzl from 'yauzl';
 import type { Entry, ZipFile } from 'yauzl';
 
-// Streaming .zip access for the book collection.
-//
-// The collection can be hundreds of GB of `.zip` archives holding ~700k books.
-// We never expand an archive to disk and never hold a whole archive in memory:
-// yauzl opens the archive with a file descriptor, reads its central directory,
-// and streams one entry at a time on demand. The scanner therefore keeps at
-// most a single book in RAM regardless of how large the archive is.
+// Streaming `.zip` access for a collection that can be hundreds of GB across
+// archives of ~700k books. An archive is never expanded to disk or held whole
+// in memory: yauzl streams one entry at a time from a file descriptor.
 
 /**
  * Where an entry's bytes sit in the archive. The scan records this per book so
@@ -37,7 +33,7 @@ export interface ZipEntry extends ZipLocation {
    * Inflate only the beginning of the entry: stop as soon as `stopAt` has been
    * seen or `limit` bytes have been produced, whichever comes first. The
    * scanner uses this to read a book's metadata header without inflating the
-   * (much larger) body and embedded cover — see `books/parseBook`.
+   * (much larger) body and embedded cover — see `formats/parseBook`.
    */
   readHead(limit: number, stopAt?: Buffer): Promise<Buffer>;
 }
@@ -141,11 +137,8 @@ function nextEntry(zf: ZipFile): Promise<Entry | null> {
   });
 }
 
-/**
- * Iterate the file entries of a `.zip`. Directories are skipped. Each entry's
- * bytes are read only when `read()` / `readHead()` is awaited, and only one at
- * a time.
- */
+/** Iterate the file entries of a `.zip`, skipping directories. An entry's
+ *  bytes are read only when `read()` / `readHead()` is awaited, one at a time. */
 export async function* zipEntries(archivePath: string): AsyncGenerator<ZipEntry> {
   const zf = await openZip(archivePath);
   try {

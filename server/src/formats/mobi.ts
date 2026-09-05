@@ -1,5 +1,5 @@
 import { sniffMime } from './fb2.js';
-import { getLangCode } from '../lang.js';
+import { getLangCode } from '../utils/lang.js';
 import type { RawMeta } from './index.js';
 import type { CoverImage } from '../types.js';
 

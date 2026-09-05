@@ -17,9 +17,10 @@ const lib = path.join(tmp, 'books');
 fs.mkdirSync(lib, { recursive: true });
 process.env.SOPDS_ROOT_LIB = lib;
 
-const { default: db, initSchema } = await import('../src/db.js');
-const settings = await import('../src/settings.js');
-const { runOnce } = await import('../src/scan/engine.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema } = await import('../src/db/schema.js');
+const settings = await import('../src/services/settings.js');
+const { runOnce } = await import('../src/services/scanner/engine.js');
 
 const ARCHIVES = 12;
 const PER_ARCHIVE = 400;

@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import config from '../config.js';
+import config from '../../config/index.js';
 import { S, onChange } from '../settings.js';
 import { fb2ToIr, irToFb2 } from './fb2.js';
 import { epubToIr, irToEpub } from './epub.js';
@@ -76,10 +76,8 @@ export function converterInfo(): ConverterInfo {
 
 const execFileAsync = promisify(execFile);
 
-// Spawned asynchronously on purpose. Calibre takes seconds to tens of seconds
-// per book, and `spawnSync` would hold the event loop for all of it — one
-// download would stall every other request the server is serving, search and
-// covers included. The built-in converters run in milliseconds and hid this.
+// Spawned asynchronously on purpose: Calibre takes seconds to tens of seconds
+// per book, and `spawnSync` would stall every other request for all of it.
 async function externalConvert(buf: Buffer, from: string, to: string): Promise<Buffer | null> {
   const bin = externalConverter();
   if (!bin) return null;
@@ -114,8 +112,8 @@ function cachePath(key: string, to: string): string {
 const isConvertible = (f: string): f is ConvertFormat =>
   (CONVERTIBLE as readonly string[]).includes(f);
 
-// Convert `buf` (a book in `from` format) to `to`. Returns a Buffer.
-// `cacheKey` (optional) enables on-disk caching of the result.
+// Convert `buf` from one format to another, preferring Calibre when present.
+// A `cacheKey` enables on-disk caching of the result.
 export async function convert(
   buf: Buffer,
   from: string,

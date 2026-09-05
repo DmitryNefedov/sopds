@@ -1,20 +1,12 @@
-import path from 'node:path';
-import fs from 'node:fs';
 import os from 'node:os';
-import express from 'express';
-import type { ErrorRequestHandler } from 'express';
-import cors from 'cors';
-import compression from 'compression';
-import morgan from 'morgan';
-import config from './config.js';
-import db, { ensureSearchIndexes, initSchema, updateCounters } from './db.js';
-import { S, loadSettings } from './settings.js';
-import { Scanner } from './scan/index.js';
-import apiRoutes from './routes/api.js';
-import opdsRoutes from './routes/opds.js';
-import adminRoutes from './routes/admin.js';
-import { requestLogger, debugRouter } from './debug.js';
-import { SERVER_ROOT } from './paths.js';
+import config from './config/index.js';
+import { ensureSearchIndexes, initSchema, updateCounters } from './db/schema.js';
+import { S, loadSettings } from './services/settings.js';
+import { Scanner } from './services/scanner/index.js';
+import { createApp } from './app.js';
+
+// Process entry point: bring the database up, build the app, open the port and
+// start the background work that must not block the healthcheck.
 
 function lanAddresses(): string[] {
   const out: string[] = [];
@@ -31,52 +23,7 @@ async function main(): Promise<void> {
   await loadSettings();
   await updateCounters();
 
-  const app = express();
-  app.use(compression());
-  app.use(cors());
-  app.use(morgan('tiny'));
-  app.use(express.json());
-  app.use(requestLogger);
-
-  app.use('/debug', debugRouter);
-  app.use('/api/admin', adminRoutes);
-  app.use('/api', apiRoutes);
-  app.use('/opds', opdsRoutes);
-
-  // Liveness + DB readiness, used by the compose healthcheck. `/healthz` is
-  // kept as an alias for existing callers.
-  app.get(['/health', '/healthz'], async (_req, res) => {
-    try {
-      await db.query('SELECT 1');
-      res.json({ ok: true });
-    } catch (err) {
-      res.status(503).json({ ok: false, error: (err as Error).message });
-    }
-  });
-
-  // Optionally serve the built React app (useful for `npm start` without the
-  // separate nginx "ui" container; in Docker the ui container serves it).
-  const webDist = path.resolve(SERVER_ROOT, '..', 'web', 'dist');
-  if (fs.existsSync(webDist)) {
-    app.use(express.static(webDist, { index: false }));
-    app.get('*', (req, res, next) => {
-      if (
-        req.path.startsWith('/api') ||
-        req.path.startsWith('/opds') ||
-        req.path.startsWith('/debug')
-      )
-        return next();
-      res.sendFile(path.join(webDist, 'index.html'));
-    });
-  }
-
-  const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
-    console.error(err);
-    res.status(500).json({ error: (err as Error).message });
-  };
-  app.use(errorHandler);
-
-  app.listen(config.port, config.host, () => {
+  createApp().listen(config.port, config.host, () => {
     const bindsAll = config.host === '0.0.0.0' || config.host === '::';
     console.log(`SimpleOPDS listening on ${config.host}:${config.port}`);
     console.log(`  local:   http://localhost:${config.port}`);
@@ -90,9 +37,8 @@ async function main(): Promise<void> {
       `  database:        postgres ${config.db.url || `${config.db.host}:${config.db.port}/${config.db.database}`}`,
     );
     Scanner.start();
-    // Text-search indexes are built after the port is open: on a large catalog
-    // this takes minutes, and nothing should wait on it — searches work
-    // throughout, just more slowly until it finishes.
+    // Built after the port is open: on a large catalog this takes minutes, and
+    // searches work throughout, just more slowly until it finishes.
     void ensureSearchIndexes();
     if (S.scanEnabled) console.log(`  scheduled scan:  ${S.scanCron}`);
     if (S.watchEnabled) console.log(`  watching:        ${S.rootLib}`);

@@ -2,9 +2,10 @@
 // Usage: node bin/scan.js [path-to-book-collection]
 // The path (or SOPDS_ROOT_LIB) overrides the "Book collection directory"
 // setting for this run only.
-import db, { initSchema } from '../src/db.js';
-import { setOverride, loadSettings, S } from '../src/settings.js';
-import { runOnce } from '../src/scan/engine.js';
+import db from '../src/db/index.js';
+import { initSchema } from '../src/db/schema.js';
+import { setOverride, loadSettings, S } from '../src/services/settings.js';
+import { runOnce } from '../src/services/scanner/engine.js';
 
 if (process.argv[2]) setOverride('rootLib', process.argv[2]);
 

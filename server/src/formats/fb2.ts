@@ -1,5 +1,5 @@
 import sax from 'sax';
-import { getLangCode } from '../lang.js';
+import { getLangCode } from '../utils/lang.js';
 import type { RawMeta } from './index.js';
 import type { CoverImage } from '../types.js';
 
@@ -23,11 +23,9 @@ export function decodeXmlBuffer(buf: Buffer): string {
 
 const IMAGE_MIME = /^image\//i;
 
-// FB2 puts every field we index inside the leading <description> element; the
-// rest of the file is the body text and the base64 <binary> blobs (a cover is
-// commonly 100-300 KB of base64). During a scan we want none of that, so
-// `fb2Head` clips the buffer right after </description>. That turns a ~500 KB
-// parse into a ~3 KB one — the single biggest win in the collection walk.
+// FB2 keeps every indexed field in the leading <description>; the rest is body
+// text and base64 <binary> blobs. Clipping there turns a ~500 KB parse into a
+// ~3 KB one — the single biggest win in the collection walk.
 const DESC_END = '</description>';
 
 /** The `</description>` marker as bytes in the buffer's own encoding. */
@@ -240,14 +238,10 @@ const BINARY_CLOSE = Buffer.from('</binary', 'latin1');
 const GT = 0x3e; // '>'
 
 /**
- * The cover of an FB2, found by scanning bytes instead of parsing XML.
- *
- * `parseFb2` has to stream the whole document through sax and collect every
- * `<binary>` as text before it can pick one — ~14 ms on a 500 KB book, and
- * covers are served one HTTP request at a time. The base64 payload of a
- * `<binary>` is plain ASCII with no markup inside it, so locating the element
- * and slicing between `>` and `</binary` gives byte-identical output for a
- * hundredth of the cost. Falls back to `parseFb2` when nothing matches.
+ * The cover of an FB2, found by scanning bytes rather than sax-parsing the whole
+ * document as `parseFb2` must (~14 ms on a 500 KB book). A `<binary>` payload is
+ * plain base64, so slicing between `>` and `</binary` is byte-identical output
+ * for a hundredth of the cost; `parseBook` falls back to `parseFb2` on a miss.
  */
 export function fb2Cover(buf: Buffer): CoverImage | null {
   let at = buf.indexOf(BINARY_OPEN);

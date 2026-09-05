@@ -1,8 +1,8 @@
-import db from './db.js';
-import type { SqlParam } from './db.js';
-import type { BookRef } from './files.js';
+import db from '../db/index.js';
+import type { SqlParam } from '../db/index.js';
+import type { BookRef } from '../connectors/bookfiles.js';
 import { S } from './settings.js';
-import { normalize } from './lang.js';
+import { normalize } from '../utils/lang.js';
 import type {
   Book,
   BookRow,
@@ -17,7 +17,7 @@ import type {
   PageOpts,
   ListOpts,
   Stats,
-} from './types.js';
+} from '../types.js';
 
 const clampPage = (p: number | string | undefined): number => {
   const n = Number.parseInt(String(p), 10);
@@ -154,16 +154,10 @@ function pageMeta(total: number, page: number, limit: number): PageMeta {
 
 // ---- unified search ------------------------------------------------------
 
-// A book matches when the query hits its title, ANY of its authors, or ANY of
-// its series. This is the cross-entity "one query" search.
-//
-// The obvious shape — LEFT JOIN books to authors and series and filter on all
-// three — makes Postgres build the full join before it can apply DISTINCT, so a
-// query touching a common word walked millions of joined rows twice (once to
-// count, once to page). Collecting matching book ids from each side first and
-// joining `books` once afterwards keeps every branch on the small side of its
-// relation: on 120k books that took the books half of a search from 1.36 s to
-// 147 ms, and it scales with the number of matches rather than the catalog.
+// A book matches when the query hits its title, any of its authors or any of
+// its series. Collecting ids per side and joining `books` once afterwards beats
+// the obvious three-way LEFT JOIN + DISTINCT (1.36 s -> 147 ms on 120k books),
+// because it scales with the number of matches rather than the catalog.
 const BOOK_MATCH_IDS = `
   WITH ids AS (
       SELECT b.id FROM books b WHERE b.avail <> 0 AND b.search_title LIKE @like
@@ -178,12 +172,9 @@ const BOOK_MATCH_IDS = `
   )
 `;
 
-// With "hide doubles" on, editions that share a title and author set collapse
-// to one entry. That has to happen BEFORE the LIMIT — collapsing a single page
-// after the fact returns fewer rows than asked for and leaves `total` counting
-// editions the caller never sees. `dkey`/`akey` are the same identity
-// `hideDoubles` used (upper-cased title + sorted author ids); `DISTINCT ON`
-// keeps the newest edition of each group and the window carries the drop count.
+// With "hide doubles" on, editions sharing a title and author set (`dkey`/`akey`)
+// collapse to the newest one. This has to happen before the LIMIT, or a page
+// returns fewer rows than asked for and `total` counts editions nobody sees.
 const BOOK_DEDUP_CTES = `
   , matched AS (
       SELECT b.id, b.search_title, b.doc_date, UPPER(b.title) AS dkey,
@@ -322,8 +313,16 @@ export async function booksByAuthor(
   { page = 1, limit }: PageOpts = {},
 ): Promise<Page<Book>> {
   const { page: p, limit: l, offset } = paginate(page, limit);
+  // Counted through `books` so the total matches the rows the query below can
+  // return: a join row whose book is unavailable would promise a page that
+  // paging then cannot deliver.
   const total = (
-    await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM book_authors WHERE author_id = ?', [authorId])
+    await db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM book_authors ba
+         JOIN books b ON b.id = ba.book_id
+        WHERE ba.author_id = ? AND b.avail <> 0`,
+      [authorId],
+    )
   )!.c;
   const rows = await db.all<BookRow>(
     `SELECT b.* FROM books b
@@ -342,7 +341,12 @@ export async function booksBySeries(
 ): Promise<Page<Book>> {
   const { page: p, limit: l, offset } = paginate(page, limit);
   const total = (
-    await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM book_series WHERE ser_id = ?', [serId])
+    await db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM book_series bs
+         JOIN books b ON b.id = bs.book_id
+        WHERE bs.ser_id = ? AND b.avail <> 0`,
+      [serId],
+    )
   )!.c;
   const rows = await db.all<BookRow>(
     `SELECT b.*, bs.ser_no FROM books b
@@ -361,7 +365,12 @@ export async function booksByGenre(
 ): Promise<Page<Book>> {
   const { page: p, limit: l, offset } = paginate(page, limit);
   const total = (
-    await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM book_genres WHERE genre_id = ?', [genreId])
+    await db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM book_genres bg
+         JOIN books b ON b.id = bg.book_id
+        WHERE bg.genre_id = ? AND b.avail <> 0`,
+      [genreId],
+    )
   )!.c;
   const rows = await db.all<BookRow>(
     `SELECT b.* FROM books b

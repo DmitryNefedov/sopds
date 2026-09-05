@@ -92,15 +92,10 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 /**
- * Make a chapter fragment safe to drop into XHTML.
- *
- * EPUB readers parse each chapter as strict XML, so one unmatched tag or one
- * undeclared entity does not degrade that paragraph — it makes the entire file
- * unreadable from that byte on, and the reader silently shows a near-empty
- * book. Converters assemble this HTML by concatenating strings from whatever
- * the source file happened to contain, so the result is checked rather than
- * trusted: stray closing tags are dropped, still-open tags are closed, void
- * elements are self-closed, and bare '&' is escaped.
+ * Make a chapter fragment safe to drop into XHTML: drop stray closing tags,
+ * close open ones, self-close void elements and escape bare '&'. EPUB readers
+ * parse each chapter as strict XML, where one bad byte silently blanks the
+ * whole file rather than the one paragraph.
  */
 export function balanceHtml(html: string): string {
   const out: string[] = [];

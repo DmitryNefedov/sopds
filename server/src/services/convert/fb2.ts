@@ -1,5 +1,5 @@
 import sax from 'sax';
-import { decodeXmlBuffer } from '../books/fb2.js';
+import { decodeXmlBuffer } from '../../formats/fb2.js';
 import { emptyIr, escapeXml, htmlToParagraphs, sanitizeHtml } from './ir.js';
 import type { Ir, IrChapter } from './ir.js';
 

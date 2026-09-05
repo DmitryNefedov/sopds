@@ -17,11 +17,12 @@ const lib = path.join(tmp, 'books');
 fs.mkdirSync(lib, { recursive: true });
 process.env.SOPDS_ROOT_LIB = lib;
 
-const { default: db, initSchema } = await import('../src/db.js');
-const settings = await import('../src/settings.js');
-const { runOnce } = await import('../src/scan/engine.js');
-const { readBookBytes, readBookCover } = await import('../src/files.js');
-const { fb2Head } = await import('../src/books/fb2.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema } = await import('../src/db/schema.js');
+const settings = await import('../src/services/settings.js');
+const { runOnce } = await import('../src/services/scanner/engine.js');
+const { readBookBytes, readBookCover } = await import('../src/connectors/bookfiles.js');
+const { fb2Head } = await import('../src/formats/fb2.js');
 
 // A 1x1 jpeg, embedded as the <binary> cover.
 const JPEG = Buffer.concat([

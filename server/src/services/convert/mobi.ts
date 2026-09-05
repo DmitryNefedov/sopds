@@ -1,11 +1,8 @@
 import { emptyIr, escapeXml, sanitizeHtml } from './ir.js';
 import type { Ir } from './ir.js';
 
-// Pure-JS MOBI (MOBI6 / PalmDOC) reader + writer.
-//
-// Reading supports uncompressed and PalmDOC-compressed text. HUFF/CDIC
-// compression (used by newer Amazon-generated files) is detected and reported
-// rather than mis-decoded.
+// Pure-JS MOBI (MOBI6 / PalmDOC) reader + writer, for uncompressed and
+// PalmDOC-compressed text. HUFF/CDIC is detected and reported, not mis-decoded.
 
 // ---------------------------------------------------------------------------
 // PalmDB parsing helpers

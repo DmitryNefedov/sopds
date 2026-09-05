@@ -170,7 +170,7 @@ export interface SeriesRef {
   index?: number;
 }
 
-/** Normalised metadata extracted from a book file by `books/parseBook`. */
+/** Normalised metadata extracted from a book file by `formats/parseBook`. */
 export interface BookMeta {
   title: string;
   authors: string[];

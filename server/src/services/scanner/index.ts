@@ -2,15 +2,12 @@ import { S, onChange, getState, setState } from '../settings.js';
 import { runOnce } from './engine.js';
 import { startSchedule, stopSchedule, resetSchedule } from './schedule.js';
 import { startWatch, stopWatch, restartWatch, watchStatus, isWatching } from './watch.js';
-import type { ScanRecord, ScanStatus } from '../types.js';
+import type { ScanRecord, ScanStatus } from '../../types.js';
 
-// The Scanner: the one module that owns Scan. It funnels every trigger —
-// manual (admin), scheduled (cron) and folder-watch — through a single
-// concurrency mutex, keeps the run / progress / last-run state, and starts and
-// stops the schedule tick and the folder watch as one lifecycle.
-//
-// The raw collection walk lives in `engine.ts` (`runOnce`); the CLI and the
-// tests call that directly and skip everything below.
+// The Scanner owns Scan: it funnels every trigger (manual, scheduled, watch)
+// through one concurrency mutex, holds the run/progress/last-run state, and
+// starts and stops the schedule tick and folder watch as one lifecycle. The raw
+// walk is `engine.ts` `runOnce`, which the CLI and tests call directly.
 
 let running = false;
 let progress: { added: number; skipped: number } | null = null;

@@ -1,5 +1,5 @@
 import { S } from '../settings.js';
-import { cronMatches } from '../cron.js';
+import { cronMatches } from '../../utils/cron.js';
 
 // The minute-resolution cron tick. Owns only "is now a scheduled time?" — it
 // calls `onDue()` and the Scanner decides what to do with the trigger.
@@ -31,8 +31,4 @@ export function stopSchedule(): void {
 /** Re-evaluate on the next tick after `scanCron` / `scanEnabled` changed. */
 export function resetSchedule(): void {
   lastTickMinute = null;
-}
-
-export function isScheduled(): boolean {
-  return timer !== null;
 }

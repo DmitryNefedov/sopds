@@ -12,7 +12,8 @@
     "initdb": "tsx bin/initdb.ts",
     "typecheck": "tsc --noEmit",
     "test": "SOPDS_TEST_DB=mem tsx --test \"test/*.test.ts\"",
-    "reindex": "tsx bin/reindex-zips.ts"
+    "reindex": "tsx bin/reindex-zips.ts",
+    "samples": "tsx bin/make-samples.ts"
   },
   "engines": {
     "node": ">=20"

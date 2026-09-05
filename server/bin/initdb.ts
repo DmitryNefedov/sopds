@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import db, { initSchema, updateCounters } from '../src/db.js';
+import db from '../src/db/index.js';
+import { initSchema, updateCounters } from '../src/db/schema.js';
 
 await initSchema();
 await updateCounters();

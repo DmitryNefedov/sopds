@@ -2,7 +2,7 @@ import path from 'node:path';
 import { parseFb2, fb2Cover, FB2_HEAD_LIMIT, FB2_HEAD_MARKER } from './fb2.js';
 import { parseEpub } from './epub.js';
 import { mobiCover, mobiMeta } from './mobi.js';
-import { getLangCode } from '../lang.js';
+import { getLangCode } from '../utils/lang.js';
 import type { BookMeta, CoverImage } from '../types.js';
 
 /** Raw output of a per-format parser, before normalisation. */
@@ -20,15 +20,12 @@ export interface RawMeta {
 }
 
 /**
- * How much of a file `parseBook` needs to see. The scan reads exactly this and
- * no more — on a collection of 500 KB books that is the difference between
- * inflating the whole thing and touching a couple of KB.
+ * How much of a file `parseBook` needs to see, and all the scan reads.
  *
- *   fb2   the metadata is the leading <description>; stop at its closing tag.
- *   mobi  the metadata is in PalmDB record 0, at the front of the file.
- *   epub  a zip, whose central directory is at the *end* — no shortcut.
- *   else  we have no parser, so the metadata comes from the filename and the
- *         bytes are never looked at.
+ *   fb2    head, to the end of the leading `<description>`
+ *   mobi   head, PalmDB record 0 at the front of the file
+ *   epub   all of it — a zip, central directory last
+ *   else   nothing; the metadata comes from the filename
  */
 export type ReadPlan =
   | { need: 'none' }
@@ -56,17 +53,15 @@ export const NO_BYTES = Buffer.alloc(0);
 
 export interface ParseOptions {
   /**
-   * Metadata only: do not decode an embedded cover, and for FB2 read no
-   * further than `</description>`. The scanner sets this — it stores no cover
-   * bytes, and `extractCover` re-reads the file on demand — which is what
-   * makes a full-collection walk cheap. `buf` may then be a *prefix* of the
-   * file rather than the whole of it.
+   * Metadata only: decode no cover, and clip FB2 at `</description>`, so `buf`
+   * may be a prefix of the file. Set by the scanner, which stores no cover
+   * bytes — `extractCover` re-reads the file on demand.
    */
   metaOnly?: boolean;
 }
 
-// Returns normalised book metadata for a supported file, or a minimal record
-// derived from the filename for formats we cannot introspect (pdf, djvu, mobi).
+// Normalised metadata for a supported file, or a filename-derived record for
+// formats we cannot introspect (pdf, djvu).
 export function parseBook(buf: Buffer, filename: string, opts: ParseOptions = {}): BookMeta {
   const ext = path.extname(filename).toLowerCase();
   try {

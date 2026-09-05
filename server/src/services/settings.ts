@@ -1,15 +1,11 @@
-import db from './db.js';
-import config from './config.js';
-import { isValidCron } from './cron.js';
+import db from '../db/index.js';
+import config from '../config/index.js';
+import { isValidCron } from '../utils/cron.js';
 
-// Runtime-editable settings, persisted in the `settings` table (created in
-// schema.sql) and exposed through the admin page. Env vars / config.js provide
-// the defaults.
-//
-// Reads go through a synchronous in-memory cache so the `S.*` accessor stays
-// synchronous everywhere it is used. `loadSettings()` must run once at startup
-// (bin scripts and index.js call it); writes update both the database and the
-// cache.
+// Runtime-editable settings, persisted in the `settings` table and edited from
+// the admin page, defaulting to `config`. Reads come from an in-memory cache so
+// the `S.*` accessor stays synchronous — `loadSettings()` must run at startup,
+// and writes update both the database and the cache.
 
 export type SettingType = 'text' | 'bool' | 'int' | 'cron';
 
@@ -131,7 +127,6 @@ function coerce(def: SettingDef, raw: unknown): SettingValue {
 
 // key -> raw stored string (JSON). `__state.*` lives here too.
 const rawCache = new Map<string, string>();
-let loaded = false;
 
 const overrides: Partial<Record<SettingKey, unknown>> = {};
 
@@ -143,7 +138,6 @@ export async function loadSettings(): Promise<void> {
   const rows = await db.all<{ key: string; value: string }>('SELECT key, value FROM settings');
   rawCache.clear();
   for (const r of rows) rawCache.set(r.key, r.value);
-  loaded = true;
 }
 
 function rawValue(key: string): unknown {
@@ -175,10 +169,6 @@ export function getAll(): Settings {
 export const S: Readonly<Settings> = new Proxy({} as Settings, {
   get: (_t, prop: string) => get(prop as SettingKey),
 });
-
-export function isLoaded(): boolean {
-  return loaded;
-}
 
 export class SettingsError extends Error {
   fields: Record<string, string>;

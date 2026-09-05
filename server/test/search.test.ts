@@ -4,10 +4,11 @@ import assert from 'node:assert/strict';
 // Run against the in-process PostgreSQL (PGlite) unless told otherwise.
 process.env.SOPDS_TEST_DB ??= 'mem';
 
-const { default: db, initSchema, updateCounters, ensureSearchIndexes } = await import('../src/db.js');
-const repo = await import('../src/repo.js');
-const { loadSettings } = await import('../src/settings.js');
-const { normalize } = await import('../src/lang.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema, updateCounters, ensureSearchIndexes } = await import('../src/db/schema.js');
+const repo = await import('../src/services/catalog.js');
+const { loadSettings } = await import('../src/services/settings.js');
+const { normalize } = await import('../src/utils/lang.js');
 
 const TABLES = [
   'book_authors', 'book_series', 'book_genres',

@@ -32,9 +32,8 @@ export interface Config {
 
 export const config: Config = {
   port: Number(process.env.PORT) || 8000,
-  // Network interface to bind. Defaults to all interfaces so the catalog is
-  // reachable from other devices on the LAN (e-readers, tablets, …).
-  // Set HOST=127.0.0.1 to restrict to localhost.
+  // Network interface to bind; all interfaces by default, so e-readers and
+  // tablets on the LAN can reach the catalog. HOST=127.0.0.1 restricts it.
   host: process.env.HOST || '0.0.0.0',
   // PostgreSQL connection. DATABASE_URL wins; otherwise the discrete PG* vars
   // (the same names the official postgres image and libpq use).
@@ -71,8 +70,8 @@ export const config: Config = {
   rootDir: SERVER_ROOT,
   // Formats the UI always offers for download; the server converts on demand.
   downloadFormats: ['fb2', 'epub', 'mobi'],
-  // Optional external converter (Calibre). When set / found on PATH it is
-  // preferred over the built-in converters. Empty string disables the lookup.
+  // Optional external converter (Calibre), preferred over the built-in ones
+  // when found. An empty string disables the lookup.
   ebookConvert:
     process.env.SOPDS_EBOOK_CONVERT !== undefined
       ? process.env.SOPDS_EBOOK_CONVERT

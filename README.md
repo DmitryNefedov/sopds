@@ -12,13 +12,13 @@ This repository was **rewritten from Django to a Node.js + React stack**:
 | DB       | Django ORM / sqlite3       | **PostgreSQL** (`server/schema.sql`, `node-postgres`) |
 | Scanner  | `sopds_scanner` mgmt command | `npm --workspace server run scan` + in-app scheduler |
 | OPDS feed| `opds_catalog.feeds`       | `server/src/routes/opds.ts` (Atom / OPDS 1.1)|
-| Converters| external `fb2epub` / `fb2mobi` binaries | built-in TS `server/src/convert/`, or Calibre |
-| Admin    | Django admin + django-constance | `/settings` page + `server/src/settings.ts` |
+| Converters| external `fb2epub` / `fb2mobi` binaries | built-in TS `server/src/services/convert/`, or Calibre |
+| Admin    | Django admin + django-constance | `/settings` page + `server/src/services/settings.ts` |
 
 The server is TypeScript compiled with `tsc` to `server/dist/` (dev runs the
 `.ts` directly via `tsx`). Catalog domain types live in
 [`server/src/types.ts`](server/src/types.ts); the typed query layer is
-[`server/src/db.ts`](server/src/db.ts).
+[`server/src/db/`](server/src/db/).
 
 The original Django code is kept for reference under [`old/`](old/)
 (`old/opds_catalog/`, `old/sopds/`, `old/sopds_web_backend/`, …); its docs are
@@ -29,19 +29,20 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
 - **Unified search.** One query searches **authors, book titles _and_ series
   names together**. A book is returned when the query matches its title, *any*
   of its authors, or *any* of its series — see `searchBooks()` /
-  `BOOK_MATCH_FROM` in [`server/src/repo.ts`](server/src/repo.ts). The
+  `BOOK_MATCH_IDS` in
+  [`server/src/services/catalog.ts`](server/src/services/catalog.ts). The
   `/api/search` endpoint also returns a combined overview (`type=all`) or a
   paginated list per entity (`type=books|authors|series`).
 - Browse by catalog tree, author, series, genre, or title prefix.
 - **Metadata & cover extraction** for FB2 (with `windows-1251` / declared-encoding
   support), EPUB and MOBI — title, authors, series, language, and the embedded
-  cover image (`server/src/books/`). Books without an embedded cover fall back to
+  cover image (`server/src/formats/`). Books without an embedded cover fall back to
   a generated placeholder (`server/assets/nocover.svg` / `.png`, rebuild with
   `python3 server/bin/make-nocover.py`).
 - Book detail and downloads (raw or zipped).
 - **On-the-fly format conversion.** Every book is offered as **FB2, EPUB and
   MOBI** even if only one format is on disk. The server converts between the
-  three natively (`server/src/convert/`, pure JS — FB2⇄EPUB⇄MOBI, PalmDOC MOBI
+  three natively (`server/src/services/convert/`, pure JS — FB2⇄EPUB⇄MOBI, PalmDOC MOBI
   read/write); if Calibre's `ebook-convert` is on `PATH` it is used instead for
   higher fidelity. Converted files are cached under `server/data/convert-cache/`.
   Endpoint: `GET /api/books/:id/download?format=epub`.
@@ -50,12 +51,12 @@ in [`old/docs-legacy-django.md`](old/docs-legacy-django.md).
   size, duplicate hiding, the external converter, etc. at runtime (persisted in
   the DB, no restart). Optionally protect it with `SOPDS_ADMIN_TOKEN`.
 - **Three ways to scan** the collection, all owned by the Scanner module
-  (`server/src/scan/`): on demand from the settings page ("Scan now"), on a
-  **cron schedule** (`scan/schedule.ts`, minute resolution), and by **watching
-  the folder** (`scan/watch.ts`) — a debounced rescan a few seconds after files
+  (`server/src/services/scanner/`): on demand from the settings page ("Scan now"), on a
+  **cron schedule** (`scanner/schedule.ts`, minute resolution), and by **watching
+  the folder** (`scanner/watch.ts`) — a debounced rescan a few seconds after files
   are added, changed or removed. Overlapping triggers queue one follow-up run.
 - **Built for large collections.** `.zip` archives are read one entry at a
-  time (`server/src/zip.ts`, streaming) — never expanded to disk, never loaded
+  time (`server/src/connectors/zip.ts`, streaming) — never expanded to disk, never loaded
   whole into memory. The scan commits books in batches (`SOPDS_SCAN_BATCH_SIZE`,
   default 10 000) so a first import of hundreds of thousands of books makes them
   searchable and downloadable as it runs, instead of only at the end.

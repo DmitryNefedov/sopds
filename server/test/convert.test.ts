@@ -5,12 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import sax from 'sax';
-import { convert, CONVERTIBLE } from '../src/convert/index.js';
-import { balanceHtml } from '../src/convert/ir.js';
-import type { Ir } from '../src/convert/ir.js';
-import { fb2ToIr } from '../src/convert/fb2.js';
-import { epubToIr } from '../src/convert/epub.js';
-import { mobiToIr } from '../src/convert/mobi.js';
+import { convert, CONVERTIBLE } from '../src/services/convert/index.js';
+import { balanceHtml } from '../src/services/convert/ir.js';
+import type { Ir } from '../src/services/convert/ir.js';
+import { fb2ToIr } from '../src/services/convert/fb2.js';
+import { epubToIr } from '../src/services/convert/epub.js';
+import { mobiToIr } from '../src/services/convert/mobi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, 'fixtures');

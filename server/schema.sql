@@ -29,11 +29,10 @@ CREATE TABLE IF NOT EXISTS books (
   lang_code     INTEGER NOT NULL DEFAULT 9,
   avail         INTEGER NOT NULL DEFAULT 0
 );
--- Where this book's bytes live inside its .zip, recorded by the scan. Lets a
--- download or cover seek straight to the entry instead of walking the archive's
--- central directory, which is O(entries) and dominates the cost of serving a
--- cover. NULL for loose files, and for rows catalogued before these columns
--- existed — `files.ts` falls back to the directory walk for those.
+-- Where this book's bytes live inside its .zip, recorded by the scan, so a read
+-- seeks straight to the entry instead of walking the O(entries) central
+-- directory. NULL for loose files and for rows catalogued before these columns
+-- existed, which `connectors/bookfiles.ts` serves by the slower name lookup.
 ALTER TABLE books ADD COLUMN IF NOT EXISTS zip_offset BIGINT;
 ALTER TABLE books ADD COLUMN IF NOT EXISTS zip_csize  BIGINT;
 ALTER TABLE books ADD COLUMN IF NOT EXISTS zip_method INTEGER;

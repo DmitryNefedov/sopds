@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import { Router } from 'express';
-import { SETTING_DEFS, getAll, setMany, SettingsError } from '../settings.js';
-import { Scanner } from '../scan/index.js';
-import { converterInfo } from '../convert/index.js';
-import config from '../config.js';
-import { qstr } from '../http.js';
+import { SETTING_DEFS, getAll, setMany, SettingsError } from '../services/settings.js';
+import { Scanner } from '../services/scanner/index.js';
+import { converterInfo } from '../services/convert/index.js';
+import config from '../config/index.js';
+import { qstr } from '../utils/http.js';
 
 const router = Router();
 
@@ -71,10 +71,8 @@ router.get('/check-path', (req, res) => {
 router.get('/scan', (_req, res) => res.json(Scanner.status()));
 
 router.post('/scan', (_req, res) => {
-  // A full first scan of a large collection can run for a long time; kick it off
-  // in the background and let the client poll GET /admin/scan for progress.
-  // Books are committed in batches, so they show up while it runs. If a scan is
-  // already running the request queues one follow-up.
+  // A first scan of a large collection runs for a long time, so start it in the
+  // background and let the client poll GET /admin/scan for progress.
   res.json(Scanner.trigger('manual'));
 });
 

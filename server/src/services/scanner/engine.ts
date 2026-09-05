@@ -2,32 +2,26 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import db, { updateCounters } from '../db.js';
-import type { Query, SqlParam, Tx } from '../db.js';
+import db from '../../db/index.js';
+import { updateCounters } from '../../db/schema.js';
+import type { Query, SqlParam, Tx } from '../../db/index.js';
 import { get as setting } from '../settings.js';
-import { parseBook, metaReadPlan, NO_BYTES } from '../books/index.js';
-import { normalize, getLangCode } from '../lang.js';
-import { zipEntries } from '../zip.js';
-import type { ZipEntry, ZipLocation } from '../zip.js';
-import type { BookMeta, ScanStats } from '../types.js';
+import { parseBook, metaReadPlan, NO_BYTES } from '../../formats/index.js';
+import { normalize, getLangCode } from '../../utils/lang.js';
+import { zipEntries } from '../../connectors/zip.js';
+import type { ZipEntry, ZipLocation } from '../../connectors/zip.js';
+import type { BookMeta, ScanStats } from '../../types.js';
 
-// The collection walk: the raw, unguarded Scan operation. `runOnce()` is called
-// directly by the CLI (`bin/scan.ts`) and the tests; the server reaches it only
-// through the Scanner module (`scan/index.ts`), which adds the concurrency
-// mutex, scheduling and folder-watch on top.
+// The collection walk: the raw Scan that the CLI and the tests call directly,
+// while the server goes through `scanner/index.ts` for the mutex, schedule and
+// folder-watch. What keeps a 700k-book collection from taking all night:
 //
-// Three things keep a 700k-book collection from taking all night:
-//
-//  * We read only a book's metadata header, never its body or cover. For FB2
-//    that means inflating (and parsing) the few KB up to `</description>`
-//    instead of the whole ~500 KB file — see `books/parseBook({ metaOnly })`.
-//  * Books go to the database in bulk `UNNEST` statements, and a directory's
-//    or archive's already-known filenames are fetched with one query, so the
-//    walk costs a handful of round-trips per thousand books rather than five
-//    per book.
-//  * Archives (and directories) are read by a small pool of concurrent tasks.
-//    Inflation happens on libuv's threadpool, so this actually uses the extra
-//    cores; all database writes still funnel through one serialised writer.
+//  * only a book's metadata header is read, never its body or cover
+//    (`formats/parseBook({ metaOnly })`)
+//  * books go out in bulk `UNNEST` statements, and a directory's known
+//    filenames arrive in one query — round-trips per thousand books, not per book
+//  * a small pool of readers works in parallel (inflation runs on libuv's
+//    threadpool) while every write funnels through one serialised Writer
 
 type LogFn = (msg: string) => void;
 interface ScanCtx {
@@ -47,9 +41,9 @@ interface WalkStats {
 const CAT_NORMAL = 0;
 const CAT_ZIP = 1;
 
-/** Upper bound on books per bulk INSERT. Well under Postgres' parameter limit,
- *  and big enough that the per-round-trip cost stops mattering. The writer
- *  clamps it to `scanBatchSize` so a small batch size still publishes often. */
+/** Upper bound on books per bulk INSERT: well under Postgres' parameter limit,
+ *  big enough that round-trip cost stops mattering. The Writer clamps it to
+ *  `scanBatchSize` so a small batch size still publishes often. */
 const MAX_ROWS_PER_STATEMENT = 500;
 
 /** How often the catalog-wide counters are recomputed mid-scan. */
@@ -302,12 +296,10 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
 }
 
 // ---- the writer -------------------------------------------------------
-// The scan does not run in one transaction. Instead it commits every
-// `batchSize` books so they become searchable/downloadable while the rest of
-// the collection is still being read.
-//
-// Readers run concurrently; every statement they cause is queued by `enqueue()`,
-// so exactly one of them is inside the transaction at a time.
+// The scan commits every `batchSize` books rather than running as one
+// transaction, so books are searchable while the rest of the collection is read.
+// Concurrent readers queue their statements through `enqueue()`, so only one of
+// them is inside the transaction at a time.
 
 class Writer {
   private tx: Tx | null = null;
@@ -701,16 +693,13 @@ export async function runOnce({
   const stats: WalkStats = { added: 0, skipped: 0, removed: 0, bad: 0, archives: 0 };
   resetCaches();
 
-  // Mark everything unavailable-pending; the walk re-marks what it finds and the
-  // sweep at the end deletes what it never saw. This is its own commit so books
-  // stay visible (avail = 1 is still "available") while the batches land.
+  // Mark everything pending; the walk re-marks what it finds and the final sweep
+  // deletes the rest. Its own commit, and avail = 1 still reads as available.
   await db.run('UPDATE books SET avail = 1 WHERE avail <> 0');
 
-  // `updateCounters()` is five COUNT(*) scans of growing tables. Committing
-  // every `batchSize` books is cheap; recounting after each of them is not, and
-  // on a 700k collection it would cost more than the walk. So publish every
-  // batch and refresh the counters on a timer — `runOnce` recounts once more
-  // at the end, so the numbers it leaves behind are exact.
+  // `updateCounters()` is five COUNT(*) scans, far too costly to run per batch,
+  // so publish every batch but refresh the counters on a timer. `runOnce`
+  // recounts at the end, so the numbers it leaves behind are exact.
   let countersAt = 0;
   const writer = new Writer(batchSize, async () => {
     stats.added = writer.added;

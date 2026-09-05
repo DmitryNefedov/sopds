@@ -16,11 +16,11 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sopds-watch-'));
 const books = path.join(tmp, 'books');
 fs.mkdirSync(path.join(books, 'sub'), { recursive: true });
 
-const { setOverride } = await import('../src/settings.js');
+const { setOverride } = await import('../src/services/settings.js');
 setOverride('rootLib', books);
 setOverride('watchDebounce', 1);
 
-const { startWatch, stopWatch, watchStatus } = await import('../src/scan/watch.js');
+const { startWatch, stopWatch, watchStatus } = await import('../src/services/scanner/watch.js');
 
 after(() => {
   stopWatch();

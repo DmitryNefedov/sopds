@@ -1,6 +1,6 @@
 import AdmZip from 'adm-zip';
 import sax from 'sax';
-import { getLangCode } from '../lang.js';
+import { getLangCode } from '../utils/lang.js';
 import { sniffMime, looksLikeImage } from './fb2.js';
 import type { RawMeta } from './index.js';
 
@@ -11,8 +11,8 @@ interface ManifestItem {
   props: string;
 }
 
-// EPUB metadata + cover extraction. Ported from book_tools/format/epub.py.
-// The accumulator is deliberately loose — this is a lenient best-effort parser.
+// EPUB metadata + cover extraction, deliberately lenient: a malformed package
+// document yields whatever fields it did manage to produce.
 export function parseEpub(buf: Buffer, { metaOnly = false }: { metaOnly?: boolean } = {}): RawMeta {
   const meta: Record<string, any> = {
     title: '',

@@ -1,22 +1,19 @@
 #!/usr/bin/env node
-// Backfill books.zip_offset / zip_csize / zip_method for a catalog that was
-// scanned before the scan recorded them.
-//
-// This reads each archive's central directory and nothing else — no book is
-// inflated and no metadata is re-parsed — so it costs a few minutes on a
-// collection that takes an hour and a half to scan. Books keep working
-// throughout: a row without a location just falls back to looking the entry up
-// by name (see files.ts readBookBytes).
+// Backfill books.zip_offset / zip_csize / zip_method for a catalog scanned
+// before the scan recorded them. Only central directories are read — nothing is
+// inflated or re-parsed — and books keep working throughout, since a row with no
+// location falls back to `connectors/bookfiles.ts` `readBookBytes` by name.
 //
 //   npm --workspace server run reindex
 //   docker compose exec api node dist/bin/reindex-zips.js
 
 import fs from 'node:fs';
 import path from 'node:path';
-import db, { initSchema } from '../src/db.js';
-import type { SqlParam } from '../src/db.js';
-import { loadSettings, get as setting } from '../src/settings.js';
-import { zipLocations } from '../src/zip.js';
+import db from '../src/db/index.js';
+import { initSchema } from '../src/db/schema.js';
+import type { SqlParam } from '../src/db/index.js';
+import { loadSettings, get as setting } from '../src/services/settings.js';
+import { zipLocations } from '../src/connectors/zip.js';
 
 const CAT_ZIP = 1;
 const ROWS_PER_STATEMENT = 1000;

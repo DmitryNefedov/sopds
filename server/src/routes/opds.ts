@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import type { Response } from 'express';
-import * as repo from '../repo.js';
-import config from '../config.js';
-import { S } from '../settings.js';
-import { mimeFor } from '../files.js';
-import { CONVERTIBLE } from '../convert/index.js';
-import { ah, qstr } from '../http.js';
+import * as repo from '../services/catalog.js';
+import config from '../config/index.js';
+import { S } from '../services/settings.js';
+import { mimeFor } from '../utils/download.js';
+import { CONVERTIBLE } from '../services/convert/index.js';
+import { ah, qstr } from '../utils/http.js';
 import type { Book } from '../types.js';
 
 // Minimal OPDS 1.1 (Atom) catalog so existing OPDS readers keep working.

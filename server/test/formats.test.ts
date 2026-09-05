@@ -18,11 +18,12 @@ const lib = path.join(tmp, 'books');
 fs.mkdirSync(lib, { recursive: true });
 process.env.SOPDS_ROOT_LIB = lib;
 
-const { default: db, initSchema } = await import('../src/db.js');
-const settings = await import('../src/settings.js');
-const { runOnce } = await import('../src/scan/engine.js');
-const { parseBook, metaReadPlan, MOBI_HEAD_LIMIT } = await import('../src/books/index.js');
-const { FB2_HEAD_LIMIT } = await import('../src/books/fb2.js');
+const { default: db } = await import('../src/db/index.js');
+const { initSchema } = await import('../src/db/schema.js');
+const settings = await import('../src/services/settings.js');
+const { runOnce } = await import('../src/services/scanner/engine.js');
+const { parseBook, metaReadPlan, MOBI_HEAD_LIMIT } = await import('../src/formats/index.js');
+const { FB2_HEAD_LIMIT } = await import('../src/formats/fb2.js');
 
 const SAMPLES = {
   '262001.fb2': 'The Sanctuary Sparrow',

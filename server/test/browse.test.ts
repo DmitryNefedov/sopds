@@ -1,0 +1,208 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+
+// The browse half of the catalog service: alphabetic listings, the four
+// "books by X" queries, the directory tree and the stats counters. Search has
+// its own file; nothing here goes through LIKE '%…%'.
+
+process.env.SOPDS_TEST_DB ??= 'mem';
+
+const { default: db } = await import('../src/db/index.js');
+const { initSchema, updateCounters } = await import('../src/db/schema.js');
+const repo = await import('../src/services/catalog.js');
+const { loadSettings, setMany } = await import('../src/services/settings.js');
+const { normalize } = await import('../src/utils/lang.js');
+
+const TABLES = [
+  'book_authors', 'book_series', 'book_genres',
+  'books', 'authors', 'series', 'catalogs', 'counters',
+];
+
+const ids = {
+  root: 0, sub: 0,
+  alpha: 0, beta: 0, gamma: 0, hidden: 0,
+  author: 0, series: 0, genre: 0,
+};
+
+before(async () => {
+  await initSchema();
+  await loadSettings();
+  await setMany({ maxItems: 50, doublesHide: false });
+  await db.exec(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
+
+  const catalog = async (name: string, path: string, parent: number | null) =>
+    (await db.get<{ id: number }>(
+      `INSERT INTO catalogs (parent_id, cat_name, path, cat_type, cat_size)
+       VALUES (?, ?, ?, 0, 0) RETURNING id`,
+      [parent, name, path],
+    ))!.id;
+  ids.root = await catalog('.', '.', null);
+  ids.sub = await catalog('russian', 'russian', ids.root);
+
+  const book = async (title: string, catalogId: number, avail = 2, langCode = 2) =>
+    (await db.get<{ id: number }>(
+      `INSERT INTO books (filename, path, format, title, search_title, lang_code, catalog_id, avail)
+       VALUES (?, 'r', 'fb2', ?, ?, ?, ?, ?) RETURNING id`,
+      [`${title}.fb2`, title, normalize(title), langCode, catalogId, avail],
+    ))!.id;
+  ids.alpha = await book('Alpha', ids.root);
+  ids.beta = await book('Beta', ids.sub);
+  ids.gamma = await book('Gamma', ids.sub, 2, 1);
+  ids.hidden = await book('Alpha Unavailable', ids.root, 0);
+
+  ids.author = (await db.get<{ id: number }>(
+    'INSERT INTO authors (full_name, search_full_name, lang_code) VALUES (?, ?, 2) RETURNING id',
+    ['Adams Douglas', normalize('Adams Douglas')],
+  ))!.id;
+  ids.series = (await db.get<{ id: number }>(
+    'INSERT INTO series (ser, search_ser, lang_code) VALUES (?, ?, 2) RETURNING id',
+    ['Hitchhiker', normalize('Hitchhiker')],
+  ))!.id;
+  ids.genre = (await db.get<{ id: number }>(
+    "INSERT INTO genres (genre, section, subsection) VALUES ('sf_test', 'Fiction', 'Science fiction') RETURNING id",
+  ))!.id;
+
+  for (const b of [ids.alpha, ids.beta, ids.hidden]) {
+    await db.run('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)', [b, ids.author]);
+    await db.run('INSERT INTO book_genres (book_id, genre_id) VALUES (?, ?)', [b, ids.genre]);
+  }
+  await db.run('INSERT INTO book_series (book_id, ser_id, ser_no) VALUES (?, ?, 2)', [
+    ids.alpha,
+    ids.series,
+  ]);
+  await db.run('INSERT INTO book_series (book_id, ser_id, ser_no) VALUES (?, ?, 1)', [
+    ids.beta,
+    ids.series,
+  ]);
+  await updateCounters();
+});
+
+after(async () => {
+  await db.end();
+});
+
+test('getBook hydrates authors, genres and series', async () => {
+  const book = await repo.getBook(ids.alpha);
+  assert.equal(book!.title, 'Alpha');
+  assert.deepEqual(book!.authors.map((a) => a.full_name), ['Adams Douglas']);
+  assert.deepEqual(book!.genres.map((g) => g.subsection), ['Science fiction']);
+  assert.deepEqual(book!.series.map((s) => s.ser), ['Hitchhiker']);
+});
+
+test('getBook returns null for an id that is not there', async () => {
+  assert.equal(await repo.getBook(999_999), null);
+});
+
+test('getBookRef returns only what locating the bytes needs', async () => {
+  const ref = await repo.getBookRef(ids.alpha);
+  assert.deepEqual(Object.keys(ref!).sort(), [
+    'cat_type', 'filename', 'path', 'zip_csize', 'zip_method', 'zip_offset',
+  ]);
+});
+
+test('books by author, series and genre exclude unavailable books', async () => {
+  const byAuthor = await repo.booksByAuthor(ids.author);
+  assert.deepEqual(byAuthor.items.map((b) => b.title), ['Alpha', 'Beta']);
+
+  const byGenre = await repo.booksByGenre(ids.genre);
+  assert.deepEqual(byGenre.items.map((b) => b.title), ['Alpha', 'Beta']);
+
+  const bySeries = await repo.booksBySeries(ids.series);
+  assert.deepEqual(bySeries.items.map((b) => b.title), ['Beta', 'Alpha'], 'ordered by ser_no');
+});
+
+test('total counts the books a caller can actually reach, not the join rows', async () => {
+  // `ids.hidden` is linked to the same author and genre but is unavailable, so
+  // counting the join table would promise a page of results that is not there.
+  const byAuthor = await repo.booksByAuthor(ids.author);
+  assert.equal(byAuthor.total, byAuthor.items.length);
+  const byGenre = await repo.booksByGenre(ids.genre);
+  assert.equal(byGenre.total, byGenre.items.length);
+
+  // The last page must not claim there is another one behind it.
+  const page = await repo.booksByAuthor(ids.author, { page: 1, limit: 2 });
+  assert.equal(page.has_next, false);
+  assert.equal(page.pages, 1);
+});
+
+test('a listing pages, and the page meta agrees with the rows', async () => {
+  const first = await repo.booksByAuthor(ids.author, { page: 1, limit: 1 });
+  assert.equal(first.items.length, 1);
+  assert.deepEqual(
+    { page: first.page, limit: first.limit, has_prev: first.has_prev, has_next: first.has_next },
+    { page: 1, limit: 1, has_prev: false, has_next: true },
+  );
+  const last = await repo.booksByAuthor(ids.author, { page: first.pages, limit: 1 });
+  assert.equal(last.has_next, false);
+  assert.equal(last.has_prev, true);
+});
+
+test('a bad page or limit falls back to page 1 and the configured default', async () => {
+  const page = await repo.listBooks({ page: 'nonsense', limit: '-3' });
+  assert.equal(page.page, 1);
+  assert.equal(page.limit, 50);
+});
+
+test('limit is capped so a caller cannot ask for the whole catalog', async () => {
+  const page = await repo.listBooks({ limit: 10_000 });
+  assert.equal(page.limit, 200);
+});
+
+test('listings filter by prefix and by language group', async () => {
+  const prefixed = await repo.listBooks({ prefix: 'al' });
+  assert.deepEqual(prefixed.items.map((b) => b.title), ['Alpha']);
+
+  const cyrillic = await repo.listBooks({ langCode: 1 });
+  assert.deepEqual(cyrillic.items.map((b) => b.title), ['Gamma']);
+
+  const authors = await repo.listAuthors({ prefix: 'ad' });
+  assert.equal(authors.items[0].book_count, 3);
+  assert.deepEqual((await repo.listAuthors({ prefix: 'zz' })).items, []);
+
+  const series = await repo.listSeries({ prefix: 'hit' });
+  assert.equal(series.items[0].ser, 'Hitchhiker');
+  assert.equal(series.items[0].book_count, 2);
+});
+
+test('browse starts at the synthetic "." root and walks into children', async () => {
+  assert.equal(await repo.rootCatalogId(), ids.root);
+
+  const children = await repo.childCatalogs(ids.root);
+  assert.deepEqual(children.map((c) => [c.cat_name, c.book_count]), [['russian', 2]]);
+
+  const rootBooks = await repo.booksByCatalog(ids.root);
+  assert.deepEqual(rootBooks.items.map((b) => b.title), ['Alpha']);
+  const subBooks = await repo.booksByCatalog(ids.sub);
+  assert.deepEqual(subBooks.items.map((b) => b.title), ['Beta', 'Gamma']);
+});
+
+test('breadcrumbs omit the synthetic root and read parent-first', async () => {
+  assert.deepEqual(await repo.catalogBreadcrumbs(ids.root), []);
+  assert.deepEqual(await repo.catalogBreadcrumbs(ids.sub), [{ id: ids.sub, name: 'russian' }]);
+  assert.deepEqual(await repo.catalogBreadcrumbs(null), []);
+});
+
+test('genre sections list only genres that have books', async () => {
+  const sections = await repo.genreSections();
+  assert.deepEqual(sections.map((s) => s.section), ['Fiction']);
+  assert.equal(sections[0].book_count, 3);
+
+  const inSection = await repo.genresInSection(sections[0].section_id);
+  assert.deepEqual(inSection.map((g) => g.subsection), ['Science fiction']);
+  assert.deepEqual(await repo.genresInSection(999_999), []);
+});
+
+test('stats reports the counters the last updateCounters wrote', async () => {
+  const s = await repo.stats();
+  assert.equal(s.allbooks, 4);
+  assert.equal(s.allcatalogs, 2);
+  assert.equal(s.allauthors, 1);
+  assert.equal(s.allseries, 1);
+  assert.ok(s.lastscan, 'lastscan is stamped');
+});
+
+test('randomBook returns a hydrated book', async () => {
+  const book = await repo.randomBook();
+  assert.ok(book && typeof book.title === 'string');
+  assert.ok(Array.isArray(book.authors));
+});

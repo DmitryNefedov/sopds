@@ -3,12 +3,9 @@ import path from 'node:path';
 import type { FSWatcher } from 'node:fs';
 import { S } from '../settings.js';
 
-// Folder-watch: a debounced "something changed under the collection root" signal.
-//
-// A manual recursive watcher (watch the root + every sub-directory) is used so
-// behaviour is identical on macOS, Linux and Windows. When the filesystem goes
-// quiet for `watchDebounce` seconds it calls the `onSettled` callback the
-// Scanner passed in; the Scanner turns that into a scan trigger.
+// A debounced "something changed under the collection root" signal, fired once
+// the filesystem has been quiet for `watchDebounce` seconds. The root and every
+// sub-directory are watched by hand, so behaviour matches across platforms.
 
 const watchers = new Map<string, FSWatcher>(); // absolute dir -> fs.FSWatcher
 let debounceTimer: NodeJS.Timeout | null = null;
