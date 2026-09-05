@@ -19,17 +19,18 @@ const opts = (req: Request): PageOpts => ({
 });
 
 // ---- unified search ----------------------------------------------------
-// GET /api/search?q=...&type=all|books|authors|series&match=prefix|all
+// GET /api/search?q=...&type=all|books|authors|series&match=exact|all
 //
-// `match=prefix` is the fast, anchored half of a search; clients run it
-// alongside the default `all` and paint whichever lands first. Every type is
-// its own request, so none of them waits on another.
+// `match=exact` is the fast half of a search — the whole field must equal the
+// query — answered off a plain index; clients run it alongside the default
+// `all` (substring) and paint whichever lands first. Every type is its own
+// request, so none of them waits on another.
 router.get(
   '/search',
   ah(async (req, res) => {
     const q = qstr(req.query.q).trim();
     const type = qstr(req.query.type, 'all');
-    const match: SearchMatch = qstr(req.query.match) === 'prefix' ? 'prefix' : 'all';
+    const match: SearchMatch = qstr(req.query.match) === 'exact' ? 'exact' : 'all';
     const page = { ...opts(req), match };
     if (!q) return res.json({ query: '', type, match, results: null });
     if (type === 'books')

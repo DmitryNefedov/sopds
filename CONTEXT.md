@@ -33,25 +33,28 @@ term; this file is the prose.
   Text matching is `LIKE '%…%'`, which no btree index can serve, so `db/schema.ts`
   `ensureSearchIndexes()` creates GIN trigram indexes in the background after
   the port opens — best-effort, since PGlite has no `pg_trgm`.
-- **Two-phase book search** — `match=prefix|all` on `GET /api/search`. The
-  *quick* pass anchors the pattern (`FOO%`), caps each branch of the id union
-  and **counts nothing**; the *full* pass is the substring search above, with
-  the exact total and duplicate collapsing. Measured on 200k books: 9 ms
-  against 380 ms. The web client (`useBookSearch`) issues both at once, paints
-  whichever lands first and merges the other in. Quick results are a subset of
-  full results, so merging only ever appends — nothing already on screen moves
-  or disappears, and a book stays downloadable from the partial list while the
-  rest of the catalog is still being searched. Only page 1 runs both passes;
-  later pages are offsets into the full result, which the quick pass cannot
-  align with.
+- **Two-phase book search** — `match=exact|all` on `GET /api/search`. The
+  *exact* pass requires the whole title, author or series to equal the query,
+  caps each branch of the id union and **counts nothing**; the *full* pass is
+  the substring search above, with the exact total and duplicate collapsing.
+  The web client (`useBookSearch`) issues both at once, paints whichever lands
+  first and merges the other in. Exact results are a subset of full results —
+  anything that equals the query also contains it — so merging only ever
+  appends: nothing already on screen moves or disappears, and a book stays
+  downloadable from the partial list while the rest of the catalog is still
+  being searched. Only page 1 runs both passes; later pages are offsets into
+  the full result, which the exact pass cannot align with.
 
-  What makes the quick pass quick is the *absence of counting*, not the index:
-  anchoring alone still cost 475 ms for a query matching 25 000 books, because
-  `COUNT(*) OVER ()` and the dedup `GROUP BY` walk the whole match set. Each
-  branch must also carry `ORDER BY … USING ~<~` — the `text_pattern_ops`
-  operator class's own ordering — or the planner either picks the
-  collation-ordered btree (93 ms) or, with no sort at all, a seq scan that
-  returns an arbitrary sample.
+  The exact pass needs no index beyond the plain btrees schema.sql already
+  creates (`idx_books_search_title` and friends) — `=` is what those serve. An
+  earlier version anchored a prefix instead and required a dedicated
+  `text_pattern_ops` index just to make the planner use it; exact needs neither
+  that index nor the tuning, and returns far fewer rows to begin with. What
+  still matters is the *absence of counting*: anchoring alone (with the count
+  and dedup left in) cost 475 ms for a query matching 25 000 books out of
+  200k — no better than the full pass — because `COUNT(*) OVER ()` and the
+  dedup `GROUP BY` walk the whole match set regardless of how the rows were
+  found.
 - **Batched hydration** — `catalog.hydrateAll` loads a whole page's authors,
   genres and series with three `= ANY(...)` queries instead of three per book.
 - **Scan** — walk the collection, upsert Books/Authors/Series/Genres, mark
@@ -132,8 +135,5 @@ opens the port and starts the Scanner. Dependencies point inward — `routes` us
   the small in-memory cases (parsing one epub, building a one-file download zip).
 - **`Settings`** (`services/settings.ts`) — runtime-editable config, read synchronously
   through the `S` accessor off an in-memory cache; written via `setMany`.
-- **Anchored indexes** (`idx_*_prefix`) — btree `text_pattern_ops` indexes on
-  the three `search_*` columns, built alongside the trigram ones. They need no
-  extension, so the quick pass stays fast even where `pg_trgm` is unavailable.
 - **`utils/cron.ts`** — five-field cron expressions (`isValidCron` / `cronMatches`).
   A leaf used by `Settings` validation and by `scanner/schedule.ts`.

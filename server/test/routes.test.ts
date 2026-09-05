@@ -128,12 +128,17 @@ test('GET /api/search narrows to one type on demand', async () => {
   assert.equal(series.body.results.items[0].ser, 'Test Series');
 });
 
-test('GET /api/search?match=prefix runs the fast half on its own', async () => {
+test('GET /api/search?match=exact runs the fast half on its own', async () => {
   // Both books are titled "<something> Story", so "story" is a substring of
-  // each but the start of neither.
-  const fast = await json('/api/search?q=story&type=books&match=prefix');
-  assert.equal(fast.body.match, 'prefix');
+  // each but neither book's title equals it.
+  const fast = await json('/api/search?q=story&type=books&match=exact');
+  assert.equal(fast.body.match, 'exact');
   assert.equal(fast.body.results.total, 0);
+
+  // The whole title, on the other hand, is an exact hit.
+  const hit = await json('/api/search?q=alpha+story&type=books&match=exact');
+  assert.equal(hit.body.results.total, 1);
+  assert.equal(hit.body.results.items[0].title, 'Alpha Story');
 
   const full = await json('/api/search?q=story&type=books');
   assert.equal(full.body.match, 'all', 'the full substring pass is the default');
@@ -141,26 +146,26 @@ test('GET /api/search?match=prefix runs the fast half on its own', async () => {
 });
 
 test('the fast half of a search is a subset of the full one', async () => {
-  // What the UI relies on: it paints the prefix pass, then merges the full
+  // What the UI relies on: it paints the exact pass, then merges the full
   // pass into it, and nothing it already showed may vanish.
   const [fast, full] = await Promise.all([
-    json('/api/search?q=alpha&type=books&match=prefix&limit=50'),
+    json('/api/search?q=alpha+story&type=books&match=exact&limit=50'),
     json('/api/search?q=alpha&type=books&limit=50'),
   ]);
   const fullIds = new Set(full.body.results.items.map((b: any) => b.id));
-  assert.ok(fast.body.results.items.length > 0, 'the anchored pass found something');
+  assert.ok(fast.body.results.items.length > 0, 'the exact pass found something');
   for (const b of fast.body.results.items) assert.ok(fullIds.has(b.id), `${b.title} is in both`);
 });
 
 test('match applies to authors, series and the combined overview alike', async () => {
-  assert.equal((await json('/api/search?q=adams&type=authors&match=prefix')).body.results.total, 1);
-  assert.equal((await json('/api/search?q=douglas&type=authors&match=prefix')).body.results.total, 0);
+  assert.equal((await json('/api/search?q=adams+douglas&type=authors&match=exact')).body.results.total, 1);
+  assert.equal((await json('/api/search?q=douglas&type=authors&match=exact')).body.results.total, 0);
   assert.equal((await json('/api/search?q=douglas&type=authors')).body.results.total, 1);
 
-  assert.equal((await json('/api/search?q=test&type=series&match=prefix')).body.results.total, 1);
-  assert.equal((await json('/api/search?q=series&type=series&match=prefix')).body.results.total, 0);
+  assert.equal((await json('/api/search?q=test+series&type=series&match=exact')).body.results.total, 1);
+  assert.equal((await json('/api/search?q=series&type=series&match=exact')).body.results.total, 0);
 
-  const overview = await json('/api/search?q=alpha&match=prefix');
+  const overview = await json('/api/search?q=alpha+story&match=exact');
   assert.equal(overview.body.type, 'all');
   assert.equal(overview.body.results.books.total, 1);
 });

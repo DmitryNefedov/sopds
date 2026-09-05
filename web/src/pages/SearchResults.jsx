@@ -70,10 +70,12 @@ function SeeAll({ onClick, children }) {
 }
 
 /**
- * The books half of a search, in two passes. The anchored pass usually lands
- * first and its results are rendered immediately — fully interactive, covers
- * and download buttons and all — while the full substring pass is still
- * running. When that lands its extra results are appended below.
+ * The books half of a search, in two passes. The exact pass usually lands
+ * first — when it finds anything, which is only when the query equals a
+ * whole title, author or series — and its results are rendered immediately:
+ * fully interactive, covers and download buttons and all, while the full
+ * substring pass is still running. When that lands its extra results are
+ * appended below.
  */
 function BookPhase({ search, children }) {
   const { items, meta, phase, error, reload } = search;

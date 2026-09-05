@@ -90,18 +90,22 @@ function mergeBooks(shown, next) {
 }
 
 /**
- * Search books in two passes at once. The anchored `match=prefix` pass is
- * served off a btree and lands in milliseconds; the full substring pass needs
- * the trigram index and can take much longer on a large catalog. Whichever
- * arrives first is painted, and the other is merged into it.
+ * Search books in two passes at once. The `match=exact` pass requires the
+ * whole title, author or series to equal the query and is served off a plain
+ * index in milliseconds; the full substring pass needs the trigram index and
+ * can take much longer on a large catalog. Whichever arrives first is
+ * painted, and the other is merged into it.
  *
- * Prefix results are a subset of full results, so merging only ever adds rows:
- * a book shown in the partial phase stays exactly where it is, and stays
- * downloadable, while the rest of the catalog is still being searched.
+ * Exact results are a subset of full results — anything that equals the query
+ * also contains it — so merging only ever adds rows: a book shown in the
+ * partial phase stays exactly where it is, and stays downloadable, while the
+ * rest of the catalog is still being searched. A query that is only part of a
+ * title (most of them) naturally skips the partial phase, since nothing
+ * equals it exactly — it just goes straight from loading to complete.
  *
- * Returns `phase`: 'loading' (nothing yet), 'partial' (fast pass only, still
+ * Returns `phase`: 'loading' (nothing yet), 'partial' (exact pass only, still
  * searching) or 'complete'. Only the first page runs both passes — later pages
- * are offsets into the full result, which the anchored pass cannot align with.
+ * are offsets into the full result, which the exact pass cannot align with.
  */
 export function useBookSearch(q, { page = 1, limit } = {}) {
   const idle = { items: [], meta: null, phase: 'idle', error: null };
@@ -143,7 +147,7 @@ export function useBookSearch(q, { page = 1, limit } = {}) {
     });
 
     if (page === 1) {
-      apiGet(url('prefix'))
+      apiGet(url('exact'))
         .then((data) => {
           // If the full pass already settled, leave the result alone: on
           // success its ordering is authoritative and these rows are in it
@@ -151,11 +155,11 @@ export function useBookSearch(q, { page = 1, limit } = {}) {
           // "still searching" on screen for a pass that is never coming.
           if (!live() || fullSettled) return;
           shown = data.results.items;
-          if (!shown.length) return; // nothing to show early; wait for the full pass
+          if (!shown.length) return; // no exact hit; wait for the full pass
           setState({ items: shown, meta: null, phase: 'partial', error: null });
         })
         .catch(() => {
-          // The fast pass is an optimisation. Losing it costs latency, not
+          // The exact pass is an optimisation. Losing it costs latency, not
           // results, so the full pass is left to report any real failure.
         });
     }

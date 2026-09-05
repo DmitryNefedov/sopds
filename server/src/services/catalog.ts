@@ -155,47 +155,47 @@ function pageMeta(total: number, page: number, limit: number): PageMeta {
 // ---- unified search ------------------------------------------------------
 
 /**
- * Which half of a search to run. `prefix` is anchored at the start of the field
- * and answers off a btree in milliseconds; `all` matches a substring anywhere
- * and needs the trigram index, so on a large catalog it is far slower.
+ * Which half of a search to run. `exact` requires the whole field to equal the
+ * query and answers off the plain btree indexes schema.sql already creates, in
+ * milliseconds; `all` matches a substring anywhere and needs the trigram
+ * index, so on a large catalog it is far slower.
  *
- * `prefix` results are always a subset of `all` results, which is what lets a
- * caller run both at once, paint the fast one and merge the slow one into it
- * without anything it already showed disappearing.
+ * `exact` results are always a subset of `all` results — anything that equals
+ * the query also contains it — which is what lets a caller run both at once,
+ * paint the fast one and merge the slow one into it without anything it
+ * already showed disappearing.
  */
-export type SearchMatch = 'prefix' | 'all';
+export type SearchMatch = 'exact' | 'all';
 
 export interface SearchOpts extends PageOpts {
   match?: SearchMatch;
 }
 
 // LIKE reads % and _ as wildcards and \ as its escape, so an unescaped query
-// matches far more than was typed — a lone '%' scans the whole catalog.
+// matches far more than was typed — a lone '%' scans the whole catalog. `=`
+// has no such metacharacters, so an exact term is bound as typed.
 const escapeLike = (s: string): string => s.replace(/([\\%_])/g, '\\$1');
 
-function likePattern(q: string, match: SearchMatch = 'all'): string {
-  const term = escapeLike(normalize(q));
-  return match === 'prefix' ? `${term}%` : `%${term}%`;
+function searchTerm(q: string, match: SearchMatch = 'all'): string {
+  const term = normalize(q);
+  return match === 'exact' ? term : `%${escapeLike(term)}%`;
 }
 
 // A book matches when the query hits its title, any of its authors or any of
 // its series. Collecting ids per side and joining `books` once afterwards beats
 // the obvious three-way LEFT JOIN + DISTINCT (1.36 s -> 147 ms on 120k books),
 // because it scales with the number of matches rather than the catalog.
-//
-// The pattern is a parameter, so the same statement serves both halves: bind
-// `FOO%` for the anchored pass and `%FOO%` for the full one.
 const BOOK_MATCH_IDS = `
   WITH ids AS (
-      SELECT b.id FROM books b WHERE b.avail <> 0 AND b.search_title LIKE @like
+      SELECT b.id FROM books b WHERE b.avail <> 0 AND b.search_title LIKE @term
     UNION
       SELECT ba.book_id FROM authors a
         JOIN book_authors ba ON ba.author_id = a.id
-       WHERE a.search_full_name LIKE @like
+       WHERE a.search_full_name LIKE @term
     UNION
       SELECT bs.book_id FROM series s
         JOIN book_series bs ON bs.ser_id = s.id
-       WHERE s.search_ser LIKE @like
+       WHERE s.search_ser LIKE @term
   )
 `;
 
@@ -219,47 +219,36 @@ const BOOK_DEDUP_CTES = `
        ORDER BY dkey, akey, doc_date DESC NULLS LAST, id
     )`;
 
-// What makes the quick pass quick is not the index — it is that it counts
-// nothing. Anchoring the pattern alone was measured at 475 ms against 200k
-// books for a query matching 25 000 of them, no better than the full pass,
-// because the cost is `COUNT(*) OVER ()` and the dedup GROUP BY walking the
-// whole match set. So this drops both, and caps each branch of the union, which
-// turns every side into an index scan that stops early: ~2 ms for any query.
-//
-// `ORDER BY … USING ~<~` is what ties each branch to its `text_pattern_ops`
-// index: it is that operator class's own ordering, so one index scan both
-// bounds the LIKE and delivers the rows in order, and `cap` stops it. Plain
-// `ORDER BY search_title` instead picks the collation-ordered btree and filters
-// as it goes (93 ms), while omitting the sort altogether gets a seq scan that
-// takes an arbitrary `cap` rows — fast only while matches happen to be dense.
-//
-// Ordering also makes the quick page the alphabetically-first matches, which is
-// what the full pass will show, so merging mostly confirms rows already on
-// screen instead of appending a disjoint second set.
+// What makes the quick pass quick is not just the index — it is that it counts
+// nothing. An earlier version anchored the pattern instead of matching it
+// exactly and kept the count and the dedup GROUP BY; that was measured at
+// 475 ms against 200k books for a query matching 25 000 of them, no better
+// than the full pass, because those two walk the whole match set regardless of
+// how the rows were found. Exact `=` finds far fewer rows to begin with (it is
+// a stricter filter than any substring or prefix), and dropping the count and
+// dedup here means neither has anything to walk. `cap` is still applied as a
+// backstop for a query that happens to equal many rows' fields at once.
 const QUICK_BOOK_IDS = `
   WITH ids AS (
       (SELECT b.id FROM books b
-        WHERE b.avail <> 0 AND b.search_title LIKE @like
-        ORDER BY b.search_title USING ~<~ LIMIT @cap)
+        WHERE b.avail <> 0 AND b.search_title = @term LIMIT @cap)
     UNION
       (SELECT ba.book_id FROM authors a
          JOIN book_authors ba ON ba.author_id = a.id
-        WHERE a.search_full_name LIKE @like
-        ORDER BY a.search_full_name USING ~<~ LIMIT @cap)
+        WHERE a.search_full_name = @term LIMIT @cap)
     UNION
       (SELECT bs.book_id FROM series s
          JOIN book_series bs ON bs.ser_id = s.id
-        WHERE s.search_ser LIKE @like
-        ORDER BY s.search_ser USING ~<~ LIMIT @cap)
+        WHERE s.search_ser = @term LIMIT @cap)
   )
   SELECT b.* FROM books b JOIN ids ON ids.id = b.id
    WHERE b.avail <> 0
    ORDER BY b.search_title, b.doc_date DESC
    LIMIT @limit`;
 
-/** How many ids each branch of the quick union may contribute. Enough that
- *  ordering the survivors gives the same first page as a full anchored search
- *  would, small enough that the scan stops almost immediately. */
+/** How many ids each branch of the quick union may contribute — generous,
+ *  since an exact match rarely returns more than a handful of rows; this is a
+ *  backstop rather than something normal queries are expected to hit. */
 const quickCap = (limit: number): number => Math.max(limit * 5, 200);
 
 /**
@@ -301,12 +290,12 @@ export async function searchBooks(
   q: string,
   { page = 1, limit, match }: SearchOpts = {},
 ): Promise<Page<Book>> {
-  const like = likePattern(q, match);
+  const term = searchTerm(q, match);
   const { page: p, limit: l, offset } = paginate(page, limit);
 
-  if (match === 'prefix') {
+  if (match === 'exact') {
     // Over-fetch so collapsing duplicates below still fills the page.
-    const rows = await db.all<BookRow>(QUICK_BOOK_IDS, { like, cap: quickCap(l), limit: l * 2 });
+    const rows = await db.all<BookRow>(QUICK_BOOK_IDS, { term, cap: quickCap(l), limit: l * 2 });
     const books = await hydrateAll(rows);
     return partialPage((S.doublesHide ? collapseDoubles(books) : books).slice(0, l), l);
   }
@@ -328,7 +317,7 @@ export async function searchBooks(
           WHERE b.avail <> 0
           ORDER BY b.search_title, b.doc_date DESC
           LIMIT @limit OFFSET @offset`,
-    { like, limit: l, offset },
+    { term, limit: l, offset },
   );
   // An offset past the end returns nothing, so fall back to a plain count only
   // in that case rather than on every search.
@@ -340,7 +329,7 @@ export async function searchBooks(
           dedup
             ? `${BOOK_MATCH_IDS}${BOOK_DEDUP_CTES} SELECT COUNT(*) AS c FROM grp`
             : `${BOOK_MATCH_IDS} SELECT COUNT(*) AS c FROM ids`,
-          { like },
+          { term },
         ))!.c;
 
   const hydrated = await hydrateAll(rows);
@@ -361,27 +350,28 @@ export async function searchAuthors(
   q: string,
   { page = 1, limit, match }: SearchOpts = {},
 ): Promise<Page<AuthorListItem>> {
-  const like = likePattern(q, match);
+  const term = searchTerm(q, match);
   const { page: p, limit: l, offset } = paginate(page, limit);
+  const cmp = match === 'exact' ? '=' : 'LIKE';
   const AUTHOR_PAGE = `SELECT a.id, a.full_name, a.lang_code,
               (SELECT COUNT(*) FROM book_authors ba WHERE ba.author_id = a.id) AS book_count
        FROM authors a
-       WHERE a.search_full_name LIKE @like
+       WHERE a.search_full_name ${cmp} @term
        ORDER BY a.search_full_name
        LIMIT @limit OFFSET @offset`;
 
   // Counting the matches costs more than fetching the page, so the quick pass
   // does not: it reports what it found and lets the full pass supply the total.
-  if (match === 'prefix') {
+  if (match === 'exact') {
     return partialPage(
-      await db.all<AuthorListItem>(AUTHOR_PAGE, { like, limit: l, offset: 0 }),
+      await db.all<AuthorListItem>(AUTHOR_PAGE, { term, limit: l, offset: 0 }),
       l,
     );
   }
 
   const [count, items] = await Promise.all([
-    db.get<{ c: number }>('SELECT COUNT(*) AS c FROM authors WHERE search_full_name LIKE ?', [like]),
-    db.all<AuthorListItem>(AUTHOR_PAGE, { like, limit: l, offset }),
+    db.get<{ c: number }>('SELECT COUNT(*) AS c FROM authors WHERE search_full_name LIKE ?', [term]),
+    db.all<AuthorListItem>(AUTHOR_PAGE, { term, limit: l, offset }),
   ]);
   return { items, ...pageMeta(count!.c, p, l) };
 }
@@ -390,25 +380,26 @@ export async function searchSeries(
   q: string,
   { page = 1, limit, match }: SearchOpts = {},
 ): Promise<Page<SeriesListItem>> {
-  const like = likePattern(q, match);
+  const term = searchTerm(q, match);
   const { page: p, limit: l, offset } = paginate(page, limit);
+  const cmp = match === 'exact' ? '=' : 'LIKE';
   const SERIES_PAGE = `SELECT s.id, s.ser, s.lang_code,
               (SELECT COUNT(*) FROM book_series bs WHERE bs.ser_id = s.id) AS book_count
        FROM series s
-       WHERE s.search_ser LIKE @like
+       WHERE s.search_ser ${cmp} @term
        ORDER BY s.search_ser
        LIMIT @limit OFFSET @offset`;
 
-  if (match === 'prefix') {
+  if (match === 'exact') {
     return partialPage(
-      await db.all<SeriesListItem>(SERIES_PAGE, { like, limit: l, offset: 0 }),
+      await db.all<SeriesListItem>(SERIES_PAGE, { term, limit: l, offset: 0 }),
       l,
     );
   }
 
   const [count, items] = await Promise.all([
-    db.get<{ c: number }>('SELECT COUNT(*) AS c FROM series WHERE search_ser LIKE ?', [like]),
-    db.all<SeriesListItem>(SERIES_PAGE, { like, limit: l, offset }),
+    db.get<{ c: number }>('SELECT COUNT(*) AS c FROM series WHERE search_ser LIKE ?', [term]),
+    db.all<SeriesListItem>(SERIES_PAGE, { term, limit: l, offset }),
   ]);
   return { items, ...pageMeta(count!.c, p, l) };
 }

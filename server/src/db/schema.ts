@@ -69,15 +69,12 @@ const TRIGRAM_INDEXES: [string, string, string][] = [
   ['idx_series_ser_trgm', 'series', 'search_ser'],
 ];
 
-// The fast half of a search is anchored — `search_title LIKE 'FOO%'` — which a
-// plain btree cannot serve under a non-C collation. `text_pattern_ops` compares
-// byte-wise, which is exactly what LIKE does, so these indexes answer the
-// anchored pass in milliseconds without needing any extension.
-const PREFIX_INDEXES: [string, string, string][] = [
-  ['idx_books_title_prefix', 'books', 'search_title'],
-  ['idx_authors_name_prefix', 'authors', 'search_full_name'],
-  ['idx_series_ser_prefix', 'series', 'search_ser'],
-];
+// The quick half of a search is now an exact `=` match, which the plain btree
+// indexes in schema.sql (`idx_books_search_title` and friends) already serve —
+// no extra index needed. An earlier version anchored on a prefix instead and
+// built `text_pattern_ops` indexes for it; those are dropped here so a
+// redeploy from that version does not carry dead weight.
+const RETIRED_INDEXES = ['idx_books_title_prefix', 'idx_authors_name_prefix', 'idx_series_ser_prefix'];
 
 /** Build one index, reporting rather than throwing. A cancelled CONCURRENTLY
  *  build leaves an invalid index that `IF NOT EXISTS` then skips forever, so
@@ -102,18 +99,12 @@ async function createIndex(name: string, sql: string, log: (m: string) => void):
  * CONCURRENTLY (which keeps the table writable meanwhile) cannot run inside a
  * transaction, hence `backend.query` rather than `db.tx`.
  *
- * Returns whether substring search is indexed. The anchored indexes are built
- * either way: they need no extension, so the fast half of a search stays fast
- * even where `pg_trgm` is unavailable.
+ * Returns whether substring search is indexed. Exact search needs nothing from
+ * here: it runs off the indexes schema.sql already creates.
  */
 export async function ensureSearchIndexes(log = console.log): Promise<boolean> {
-  for (const [name, table, column] of PREFIX_INDEXES) {
-    await createIndex(
-      name,
-      `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name}
-         ON ${table} (${column} text_pattern_ops)`,
-      log,
-    );
+  for (const name of RETIRED_INDEXES) {
+    await backend.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`, []).catch(() => {});
   }
 
   try {
