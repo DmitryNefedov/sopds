@@ -212,3 +212,141 @@ test('ensureSearchIndexes reports honestly when it cannot help', async () => {
   if (!ok) assert.match(lines.join(' '), /pg_trgm|could not build/);
   assert.equal((await repo.searchBooks('watch')).total, 2, 'search works either way');
 });
+
+// ---- two-phase search --------------------------------------------------
+// The UI runs the anchored pass and the substring pass at the same time and
+// merges them, which only works if `prefix` results are always a subset of
+// `all` results. These pin that relationship down.
+
+test('prefix matches anchor at the start of a title', async () => {
+  const anchored = await repo.searchBooks('night', { match: 'prefix' });
+  assert.deepEqual(anchored.items.map((b) => b.title), ['Night Watch']);
+
+  // "atch" is a substring of both titles but the start of nothing at all.
+  const none = await repo.searchBooks('atch', { match: 'prefix' });
+  assert.deepEqual(none.items.map((b) => b.title), [], 'nothing starts with "atch"');
+  assert.equal(none.total, 0);
+  assert.equal((await repo.searchBooks('atch')).total, 2, 'but the full pass finds both');
+});
+
+test('prefix matches also anchor on author and series names', async () => {
+  // The query need only prefix one of the three sides. Neither title starts
+  // with "lukyanenko" or "watch" — the author and the series do.
+  const byAuthor = await repo.searchBooks('lukyanenko', { match: 'prefix' });
+  assert.deepEqual(byAuthor.items.map((b) => b.title), ['Day Watch', 'Night Watch']);
+
+  const bySeries = await repo.searchBooks('watch', { match: 'prefix' });
+  assert.deepEqual(bySeries.items.map((b) => b.title), ['Day Watch', 'Night Watch']);
+
+  // …while a mid-name substring reaches them only through the full pass.
+  assert.equal((await repo.searchBooks('yanenko', { match: 'prefix' })).total, 0);
+  assert.equal((await repo.searchBooks('yanenko')).total, 2);
+});
+
+test('an exact query is included in its own prefix results', async () => {
+  const exact = await repo.searchBooks('night watch', { match: 'prefix' });
+  assert.deepEqual(exact.items.map((b) => b.title), ['Night Watch']);
+});
+
+test('every prefix result is also a full result, for all three types', async () => {
+  for (const q of ['night', 'day', 'lukyanenko', 'war', 'to']) {
+    const [fastBooks, allBooks] = await Promise.all([
+      repo.searchBooks(q, { match: 'prefix', limit: 200 }),
+      repo.searchBooks(q, { match: 'all', limit: 200 }),
+    ]);
+    const full = new Set(allBooks.items.map((b) => b.id));
+    for (const b of fastBooks.items) {
+      assert.ok(full.has(b.id), `"${q}": book ${b.title} is in the full result too`);
+    }
+    assert.ok(fastBooks.total <= allBooks.total, `"${q}": prefix total <= full total`);
+
+    const [fastAuthors, allAuthors] = await Promise.all([
+      repo.searchAuthors(q, { match: 'prefix', limit: 200 }),
+      repo.searchAuthors(q, { match: 'all', limit: 200 }),
+    ]);
+    const authorIds = new Set(allAuthors.items.map((a) => a.id));
+    for (const a of fastAuthors.items) assert.ok(authorIds.has(a.id), `"${q}": ${a.full_name}`);
+
+    const [fastSeries, allSeries] = await Promise.all([
+      repo.searchSeries(q, { match: 'prefix', limit: 200 }),
+      repo.searchSeries(q, { match: 'all', limit: 200 }),
+    ]);
+    const serIds = new Set(allSeries.items.map((s) => s.id));
+    for (const s of fastSeries.items) assert.ok(serIds.has(s.id), `"${q}": ${s.ser}`);
+  }
+});
+
+test('the default match is the full substring search', async () => {
+  const explicit = await repo.searchBooks('watch', { match: 'all' });
+  const implied = await repo.searchBooks('watch');
+  assert.equal(implied.total, explicit.total);
+  assert.equal(implied.total, 2);
+});
+
+test('authors and series honour the prefix mode too', async () => {
+  assert.deepEqual(
+    (await repo.searchAuthors('luk', { match: 'prefix' })).items.map((a) => a.full_name),
+    ['Lukyanenko Sergey'],
+  );
+  // "sergey" is the second word of the name, so it is not a prefix of it.
+  assert.deepEqual((await repo.searchAuthors('sergey', { match: 'prefix' })).items, []);
+  assert.equal((await repo.searchAuthors('sergey', { match: 'all' })).total, 1);
+
+  assert.deepEqual(
+    (await repo.searchSeries('wat', { match: 'prefix' })).items.map((s) => s.ser),
+    ['Watch'],
+  );
+});
+
+test('LIKE wildcards in a query are matched literally, not as wildcards', async () => {
+  // Without escaping, "%" alone would match every row in the catalog — the
+  // worst possible query to hand an unindexed LIKE.
+  assert.equal((await repo.searchBooks('%')).total, 0);
+  assert.equal((await repo.searchAuthors('%')).total, 0);
+  assert.equal((await repo.searchSeries('%')).total, 0);
+  // "_" is LIKE's single-character wildcard; "N_ght Watch" must not match.
+  assert.equal((await repo.searchBooks('N_ght Watch')).total, 0);
+  assert.equal((await repo.searchBooks('Night Watch')).total, 1);
+});
+
+test('searchAll can run either half, and both keep the three types together', async () => {
+  const full = await repo.searchAll('watch');
+  assert.equal(full.books.total, 2);
+  assert.equal(full.series.total, 1);
+
+  const fast = await repo.searchAll('watch', { match: 'prefix' });
+  assert.equal(fast.series.total, 1, 'the series is named "Watch"');
+  assert.equal(fast.books.total, 2, 'and its books match through it');
+
+  // A mid-word query is reachable only by the full pass, which is the case the
+  // two-phase UI exists for: the fast half comes back empty, then fills in.
+  const nothing = await repo.searchAll('atch', { match: 'prefix' });
+  assert.equal(nothing.books.total, 0);
+  assert.equal(nothing.series.total, 0);
+  assert.equal((await repo.searchAll('atch')).books.total, 2);
+});
+
+test('the quick pass reports what it found, flagged as not a count', async () => {
+  const quick = await repo.searchBooks('night', { match: 'prefix', limit: 1 });
+  assert.equal(quick.partial, true, 'total is a floor, not a count');
+  assert.equal(quick.items.length, 1);
+  assert.equal(quick.total, 1);
+  assert.equal(quick.has_next, false, 'a partial page never offers a next page');
+  assert.equal(quick.pages, 1);
+
+  // The full pass counts properly and says nothing about being partial.
+  const full = await repo.searchBooks('watch', { limit: 1 });
+  assert.equal(full.partial, undefined);
+  assert.equal(full.total, 2);
+  assert.equal(full.has_next, true);
+});
+
+test('the quick pass ignores paging and always answers the first page', async () => {
+  // It exists to fill the screen fast; offsets belong to the counted pass.
+  const p2 = await repo.searchBooks('watch', { match: 'prefix', page: 2, limit: 1 });
+  assert.equal(p2.page, 1);
+  assert.deepEqual(
+    p2.items.map((b) => b.id),
+    (await repo.searchBooks('watch', { match: 'prefix', page: 1, limit: 1 })).items.map((b) => b.id),
+  );
+});

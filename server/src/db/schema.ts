@@ -69,39 +69,70 @@ const TRIGRAM_INDEXES: [string, string, string][] = [
   ['idx_series_ser_trgm', 'series', 'search_ser'],
 ];
 
+// The fast half of a search is anchored — `search_title LIKE 'FOO%'` — which a
+// plain btree cannot serve under a non-C collation. `text_pattern_ops` compares
+// byte-wise, which is exactly what LIKE does, so these indexes answer the
+// anchored pass in milliseconds without needing any extension.
+const PREFIX_INDEXES: [string, string, string][] = [
+  ['idx_books_title_prefix', 'books', 'search_title'],
+  ['idx_authors_name_prefix', 'authors', 'search_full_name'],
+  ['idx_series_ser_prefix', 'series', 'search_ser'],
+];
+
+/** Build one index, reporting rather than throwing. A cancelled CONCURRENTLY
+ *  build leaves an invalid index that `IF NOT EXISTS` then skips forever, so
+ *  the failure message says how to retry. */
+async function createIndex(name: string, sql: string, log: (m: string) => void): Promise<boolean> {
+  const started = Date.now();
+  try {
+    await backend.query(sql, []);
+    const secs = (Date.now() - started) / 1000;
+    if (secs > 1) log(`search: built ${name} in ${secs.toFixed(0)}s`);
+    return true;
+  } catch (err) {
+    const why = String((err as Error).message).split('\n')[0];
+    log(`search: could not build ${name}: ${why} (DROP INDEX ${name} to retry)`);
+    return false;
+  }
+}
+
 /**
- * Create the text-search indexes if this database can have them. Called after
- * the HTTP port opens — a GIN index over a million titles takes minutes, and
+ * Create the text-search indexes this database can have. Called after the HTTP
+ * port opens — a GIN index over a million titles takes minutes, and
  * CONCURRENTLY (which keeps the table writable meanwhile) cannot run inside a
  * transaction, hence `backend.query` rather than `db.tx`.
+ *
+ * Returns whether substring search is indexed. The anchored indexes are built
+ * either way: they need no extension, so the fast half of a search stays fast
+ * even where `pg_trgm` is unavailable.
  */
 export async function ensureSearchIndexes(log = console.log): Promise<boolean> {
-  const why = (err: unknown) => String((err as Error).message).split('\n')[0];
+  for (const [name, table, column] of PREFIX_INDEXES) {
+    await createIndex(
+      name,
+      `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name}
+         ON ${table} (${column} text_pattern_ops)`,
+      log,
+    );
+  }
+
   try {
     await backend.query('CREATE EXTENSION IF NOT EXISTS pg_trgm', []);
   } catch (err) {
     log(
-      `search: pg_trgm unavailable (${why(err)}); ` +
-        'text search falls back to sequential scans',
+      `search: pg_trgm unavailable (${String((err as Error).message).split('\n')[0]}); ` +
+        'substring search falls back to sequential scans',
     );
     return false;
   }
   for (const [name, table, column] of TRIGRAM_INDEXES) {
-    const started = Date.now();
-    try {
-      await backend.query(
-        `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name}
-           ON ${table} USING gin (${column} gin_trgm_ops)`,
-        [],
-      );
-      const secs = (Date.now() - started) / 1000;
-      if (secs > 1) log(`search: built ${name} in ${secs.toFixed(0)}s`);
-    } catch (err) {
-      // A cancelled CONCURRENTLY build leaves an invalid index behind, which
-      // `IF NOT EXISTS` would then skip forever — say so rather than fail quietly.
-      log(`search: could not build ${name}: ${why(err)} (DROP INDEX ${name} to retry)`);
-      return false;
-    }
+    const built = await createIndex(
+      name,
+      `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name}
+         ON ${table} USING gin (${column} gin_trgm_ops)`,
+      log,
+    );
+    if (!built) return false;
   }
   await backend.query('ANALYZE books, authors, series', []).catch(() => {});
   return true;

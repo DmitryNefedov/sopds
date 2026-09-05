@@ -106,7 +106,7 @@ test('/health reports the database is reachable', async () => {
 test('GET /api/search with no query returns an empty result, not an error', async () => {
   const { status, body } = await json('/api/search');
   assert.equal(status, 200);
-  assert.deepEqual(body, { query: '', type: 'all', results: null });
+  assert.deepEqual(body, { query: '', type: 'all', match: 'all', results: null });
 });
 
 test('GET /api/search returns a preview of every type by default', async () => {
@@ -126,6 +126,54 @@ test('GET /api/search narrows to one type on demand', async () => {
 
   const series = await json('/api/search?q=test&type=series');
   assert.equal(series.body.results.items[0].ser, 'Test Series');
+});
+
+test('GET /api/search?match=prefix runs the fast half on its own', async () => {
+  // Both books are titled "<something> Story", so "story" is a substring of
+  // each but the start of neither.
+  const fast = await json('/api/search?q=story&type=books&match=prefix');
+  assert.equal(fast.body.match, 'prefix');
+  assert.equal(fast.body.results.total, 0);
+
+  const full = await json('/api/search?q=story&type=books');
+  assert.equal(full.body.match, 'all', 'the full substring pass is the default');
+  assert.equal(full.body.results.total, 2);
+});
+
+test('the fast half of a search is a subset of the full one', async () => {
+  // What the UI relies on: it paints the prefix pass, then merges the full
+  // pass into it, and nothing it already showed may vanish.
+  const [fast, full] = await Promise.all([
+    json('/api/search?q=alpha&type=books&match=prefix&limit=50'),
+    json('/api/search?q=alpha&type=books&limit=50'),
+  ]);
+  const fullIds = new Set(full.body.results.items.map((b: any) => b.id));
+  assert.ok(fast.body.results.items.length > 0, 'the anchored pass found something');
+  for (const b of fast.body.results.items) assert.ok(fullIds.has(b.id), `${b.title} is in both`);
+});
+
+test('match applies to authors, series and the combined overview alike', async () => {
+  assert.equal((await json('/api/search?q=adams&type=authors&match=prefix')).body.results.total, 1);
+  assert.equal((await json('/api/search?q=douglas&type=authors&match=prefix')).body.results.total, 0);
+  assert.equal((await json('/api/search?q=douglas&type=authors')).body.results.total, 1);
+
+  assert.equal((await json('/api/search?q=test&type=series&match=prefix')).body.results.total, 1);
+  assert.equal((await json('/api/search?q=series&type=series&match=prefix')).body.results.total, 0);
+
+  const overview = await json('/api/search?q=alpha&match=prefix');
+  assert.equal(overview.body.type, 'all');
+  assert.equal(overview.body.results.books.total, 1);
+});
+
+test('an unknown match value falls back to the full search', async () => {
+  const res = await json('/api/search?q=story&type=books&match=nonsense');
+  assert.equal(res.body.match, 'all');
+  assert.equal(res.body.results.total, 2);
+});
+
+test('a query of LIKE wildcards matches nothing rather than everything', async () => {
+  assert.equal((await json('/api/search?q=%25&type=books')).body.results.total, 0);
+  assert.equal((await json('/api/search?q=_&type=books')).body.results.total, 0);
 });
 
 // ---- books -------------------------------------------------------------

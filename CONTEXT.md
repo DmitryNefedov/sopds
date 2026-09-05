@@ -33,6 +33,25 @@ term; this file is the prose.
   Text matching is `LIKE '%…%'`, which no btree index can serve, so `db/schema.ts`
   `ensureSearchIndexes()` creates GIN trigram indexes in the background after
   the port opens — best-effort, since PGlite has no `pg_trgm`.
+- **Two-phase book search** — `match=prefix|all` on `GET /api/search`. The
+  *quick* pass anchors the pattern (`FOO%`), caps each branch of the id union
+  and **counts nothing**; the *full* pass is the substring search above, with
+  the exact total and duplicate collapsing. Measured on 200k books: 9 ms
+  against 380 ms. The web client (`useBookSearch`) issues both at once, paints
+  whichever lands first and merges the other in. Quick results are a subset of
+  full results, so merging only ever appends — nothing already on screen moves
+  or disappears, and a book stays downloadable from the partial list while the
+  rest of the catalog is still being searched. Only page 1 runs both passes;
+  later pages are offsets into the full result, which the quick pass cannot
+  align with.
+
+  What makes the quick pass quick is the *absence of counting*, not the index:
+  anchoring alone still cost 475 ms for a query matching 25 000 books, because
+  `COUNT(*) OVER ()` and the dedup `GROUP BY` walk the whole match set. Each
+  branch must also carry `ORDER BY … USING ~<~` — the `text_pattern_ops`
+  operator class's own ordering — or the planner either picks the
+  collation-ordered btree (93 ms) or, with no sort at all, a seq scan that
+  returns an arbitrary sample.
 - **Batched hydration** — `catalog.hydrateAll` loads a whole page's authors,
   genres and series with three `= ANY(...)` queries instead of three per book.
 - **Scan** — walk the collection, upsert Books/Authors/Series/Genres, mark
@@ -113,5 +132,8 @@ opens the port and starts the Scanner. Dependencies point inward — `routes` us
   the small in-memory cases (parsing one epub, building a one-file download zip).
 - **`Settings`** (`services/settings.ts`) — runtime-editable config, read synchronously
   through the `S` accessor off an in-memory cache; written via `setMany`.
+- **Anchored indexes** (`idx_*_prefix`) — btree `text_pattern_ops` indexes on
+  the three `search_*` columns, built alongside the trigram ones. They need no
+  extension, so the quick pass stays fast even where `pg_trgm` is unavailable.
 - **`utils/cron.ts`** — five-field cron expressions (`isValidCron` / `cronMatches`).
   A leaf used by `Settings` validation and by `scanner/schedule.ts`.

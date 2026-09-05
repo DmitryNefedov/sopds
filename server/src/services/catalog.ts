@@ -154,10 +154,37 @@ function pageMeta(total: number, page: number, limit: number): PageMeta {
 
 // ---- unified search ------------------------------------------------------
 
+/**
+ * Which half of a search to run. `prefix` is anchored at the start of the field
+ * and answers off a btree in milliseconds; `all` matches a substring anywhere
+ * and needs the trigram index, so on a large catalog it is far slower.
+ *
+ * `prefix` results are always a subset of `all` results, which is what lets a
+ * caller run both at once, paint the fast one and merge the slow one into it
+ * without anything it already showed disappearing.
+ */
+export type SearchMatch = 'prefix' | 'all';
+
+export interface SearchOpts extends PageOpts {
+  match?: SearchMatch;
+}
+
+// LIKE reads % and _ as wildcards and \ as its escape, so an unescaped query
+// matches far more than was typed — a lone '%' scans the whole catalog.
+const escapeLike = (s: string): string => s.replace(/([\\%_])/g, '\\$1');
+
+function likePattern(q: string, match: SearchMatch = 'all'): string {
+  const term = escapeLike(normalize(q));
+  return match === 'prefix' ? `${term}%` : `%${term}%`;
+}
+
 // A book matches when the query hits its title, any of its authors or any of
 // its series. Collecting ids per side and joining `books` once afterwards beats
 // the obvious three-way LEFT JOIN + DISTINCT (1.36 s -> 147 ms on 120k books),
 // because it scales with the number of matches rather than the catalog.
+//
+// The pattern is a parameter, so the same statement serves both halves: bind
+// `FOO%` for the anchored pass and `%FOO%` for the full one.
 const BOOK_MATCH_IDS = `
   WITH ids AS (
       SELECT b.id FROM books b WHERE b.avail <> 0 AND b.search_title LIKE @like
@@ -192,9 +219,75 @@ const BOOK_DEDUP_CTES = `
        ORDER BY dkey, akey, doc_date DESC NULLS LAST, id
     )`;
 
-export async function searchBooks(q: string, { page = 1, limit }: PageOpts = {}): Promise<Page<Book>> {
-  const like = `%${normalize(q)}%`;
+// What makes the quick pass quick is not the index — it is that it counts
+// nothing. Anchoring the pattern alone was measured at 475 ms against 200k
+// books for a query matching 25 000 of them, no better than the full pass,
+// because the cost is `COUNT(*) OVER ()` and the dedup GROUP BY walking the
+// whole match set. So this drops both, and caps each branch of the union, which
+// turns every side into an index scan that stops early: ~2 ms for any query.
+//
+// `ORDER BY … USING ~<~` is what ties each branch to its `text_pattern_ops`
+// index: it is that operator class's own ordering, so one index scan both
+// bounds the LIKE and delivers the rows in order, and `cap` stops it. Plain
+// `ORDER BY search_title` instead picks the collation-ordered btree and filters
+// as it goes (93 ms), while omitting the sort altogether gets a seq scan that
+// takes an arbitrary `cap` rows — fast only while matches happen to be dense.
+//
+// Ordering also makes the quick page the alphabetically-first matches, which is
+// what the full pass will show, so merging mostly confirms rows already on
+// screen instead of appending a disjoint second set.
+const QUICK_BOOK_IDS = `
+  WITH ids AS (
+      (SELECT b.id FROM books b
+        WHERE b.avail <> 0 AND b.search_title LIKE @like
+        ORDER BY b.search_title USING ~<~ LIMIT @cap)
+    UNION
+      (SELECT ba.book_id FROM authors a
+         JOIN book_authors ba ON ba.author_id = a.id
+        WHERE a.search_full_name LIKE @like
+        ORDER BY a.search_full_name USING ~<~ LIMIT @cap)
+    UNION
+      (SELECT bs.book_id FROM series s
+         JOIN book_series bs ON bs.ser_id = s.id
+        WHERE s.search_ser LIKE @like
+        ORDER BY s.search_ser USING ~<~ LIMIT @cap)
+  )
+  SELECT b.* FROM books b JOIN ids ON ids.id = b.id
+   WHERE b.avail <> 0
+   ORDER BY b.search_title, b.doc_date DESC
+   LIMIT @limit`;
+
+/** How many ids each branch of the quick union may contribute. Enough that
+ *  ordering the survivors gives the same first page as a full anchored search
+ *  would, small enough that the scan stops almost immediately. */
+const quickCap = (limit: number): number => Math.max(limit * 5, 200);
+
+/** A page that counted nothing: `total` is what was found, not what exists. */
+function partialPage<T>(items: T[], limit: number): Page<T> {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    limit,
+    pages: 1,
+    has_next: false,
+    has_prev: false,
+    partial: true,
+  };
+}
+
+export async function searchBooks(
+  q: string,
+  { page = 1, limit, match }: SearchOpts = {},
+): Promise<Page<Book>> {
+  const like = likePattern(q, match);
   const { page: p, limit: l, offset } = paginate(page, limit);
+
+  if (match === 'prefix') {
+    const rows = await db.all<BookRow>(QUICK_BOOK_IDS, { like, cap: quickCap(l), limit: l });
+    return partialPage(await hydrateAll(rows), l);
+  }
+
   const dedup = S.doublesHide;
 
   // `COUNT(*) OVER ()` rides along with the page, so the match set is built
@@ -235,46 +328,66 @@ export async function searchBooks(q: string, { page = 1, limit }: PageOpts = {})
   return { items, ...pageMeta(total, p, l) };
 }
 
+// The count and the page are independent queries, so they go out together on
+// two connections rather than one after the other. `COUNT(*) OVER ()` would
+// fold them into one statement, as `searchBooks` does, but here the target list
+// carries a correlated `book_count` subquery: under a window function Postgres
+// projects it for every match instead of for the page, which costs far more
+// than the round trip it saves.
 export async function searchAuthors(
   q: string,
-  { page = 1, limit }: PageOpts = {},
+  { page = 1, limit, match }: SearchOpts = {},
 ): Promise<Page<AuthorListItem>> {
-  const like = `%${normalize(q)}%`;
+  const like = likePattern(q, match);
   const { page: p, limit: l, offset } = paginate(page, limit);
-  const total = (
-    await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM authors WHERE search_full_name LIKE ?', [like])
-  )!.c;
-  const items = await db.all<AuthorListItem>(
-    `SELECT a.id, a.full_name, a.lang_code,
-            (SELECT COUNT(*) FROM book_authors ba WHERE ba.author_id = a.id) AS book_count
-     FROM authors a
-     WHERE a.search_full_name LIKE @like
-     ORDER BY a.search_full_name
-     LIMIT @limit OFFSET @offset`,
-    { like, limit: l, offset },
-  );
-  return { items, ...pageMeta(total, p, l) };
+  const AUTHOR_PAGE = `SELECT a.id, a.full_name, a.lang_code,
+              (SELECT COUNT(*) FROM book_authors ba WHERE ba.author_id = a.id) AS book_count
+       FROM authors a
+       WHERE a.search_full_name LIKE @like
+       ORDER BY a.search_full_name
+       LIMIT @limit OFFSET @offset`;
+
+  // Counting the matches costs more than fetching the page, so the quick pass
+  // does not: it reports what it found and lets the full pass supply the total.
+  if (match === 'prefix') {
+    return partialPage(
+      await db.all<AuthorListItem>(AUTHOR_PAGE, { like, limit: l, offset: 0 }),
+      l,
+    );
+  }
+
+  const [count, items] = await Promise.all([
+    db.get<{ c: number }>('SELECT COUNT(*) AS c FROM authors WHERE search_full_name LIKE ?', [like]),
+    db.all<AuthorListItem>(AUTHOR_PAGE, { like, limit: l, offset }),
+  ]);
+  return { items, ...pageMeta(count!.c, p, l) };
 }
 
 export async function searchSeries(
   q: string,
-  { page = 1, limit }: PageOpts = {},
+  { page = 1, limit, match }: SearchOpts = {},
 ): Promise<Page<SeriesListItem>> {
-  const like = `%${normalize(q)}%`;
+  const like = likePattern(q, match);
   const { page: p, limit: l, offset } = paginate(page, limit);
-  const total = (
-    await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM series WHERE search_ser LIKE ?', [like])
-  )!.c;
-  const items = await db.all<SeriesListItem>(
-    `SELECT s.id, s.ser, s.lang_code,
-            (SELECT COUNT(*) FROM book_series bs WHERE bs.ser_id = s.id) AS book_count
-     FROM series s
-     WHERE s.search_ser LIKE @like
-     ORDER BY s.search_ser
-     LIMIT @limit OFFSET @offset`,
-    { like, limit: l, offset },
-  );
-  return { items, ...pageMeta(total, p, l) };
+  const SERIES_PAGE = `SELECT s.id, s.ser, s.lang_code,
+              (SELECT COUNT(*) FROM book_series bs WHERE bs.ser_id = s.id) AS book_count
+       FROM series s
+       WHERE s.search_ser LIKE @like
+       ORDER BY s.search_ser
+       LIMIT @limit OFFSET @offset`;
+
+  if (match === 'prefix') {
+    return partialPage(
+      await db.all<SeriesListItem>(SERIES_PAGE, { like, limit: l, offset: 0 }),
+      l,
+    );
+  }
+
+  const [count, items] = await Promise.all([
+    db.get<{ c: number }>('SELECT COUNT(*) AS c FROM series WHERE search_ser LIKE ?', [like]),
+    db.all<SeriesListItem>(SERIES_PAGE, { like, limit: l, offset }),
+  ]);
+  return { items, ...pageMeta(count!.c, p, l) };
 }
 
 export interface SearchAll {
@@ -284,12 +397,17 @@ export interface SearchAll {
   books: Page<Book>;
 }
 
-// Combined overview: a preview of each entity type for a single query.
-export async function searchAll(q: string, { previewLimit = 5 } = {}): Promise<SearchAll> {
+// Combined overview: a preview of each entity type for one query, all three
+// issued together. A client that wants them to paint independently asks for
+// each type on its own request instead.
+export async function searchAll(
+  q: string,
+  { previewLimit = 5, match }: { previewLimit?: number; match?: SearchMatch } = {},
+): Promise<SearchAll> {
   const [authors, series, books] = await Promise.all([
-    searchAuthors(q, { page: 1, limit: previewLimit }),
-    searchSeries(q, { page: 1, limit: previewLimit }),
-    searchBooks(q, { page: 1, limit: previewLimit }),
+    searchAuthors(q, { page: 1, limit: previewLimit, match }),
+    searchSeries(q, { page: 1, limit: previewLimit, match }),
+    searchBooks(q, { page: 1, limit: previewLimit, match }),
   ]);
   return { query: q, authors, series, books };
 }
@@ -316,23 +434,23 @@ export async function booksByAuthor(
   // Counted through `books` so the total matches the rows the query below can
   // return: a join row whose book is unavailable would promise a page that
   // paging then cannot deliver.
-  const total = (
-    await db.get<{ c: number }>(
+  const [count, rows] = await Promise.all([
+    db.get<{ c: number }>(
       `SELECT COUNT(*) AS c FROM book_authors ba
          JOIN books b ON b.id = ba.book_id
         WHERE ba.author_id = ? AND b.avail <> 0`,
       [authorId],
-    )
-  )!.c;
-  const rows = await db.all<BookRow>(
-    `SELECT b.* FROM books b
-     JOIN book_authors ba ON ba.book_id = b.id
-     WHERE ba.author_id = @id AND b.avail <> 0
-     ORDER BY b.search_title, b.doc_date DESC
-     LIMIT @limit OFFSET @offset`,
-    { id: authorId, limit: l, offset },
-  );
-  return { items: await hydrateAll(rows), ...pageMeta(total, p, l) };
+    ),
+    db.all<BookRow>(
+      `SELECT b.* FROM books b
+       JOIN book_authors ba ON ba.book_id = b.id
+       WHERE ba.author_id = @id AND b.avail <> 0
+       ORDER BY b.search_title, b.doc_date DESC
+       LIMIT @limit OFFSET @offset`,
+      { id: authorId, limit: l, offset },
+    ),
+  ]);
+  return { items: await hydrateAll(rows), ...pageMeta(count!.c, p, l) };
 }
 
 export async function booksBySeries(
@@ -340,23 +458,23 @@ export async function booksBySeries(
   { page = 1, limit }: PageOpts = {},
 ): Promise<Page<Book>> {
   const { page: p, limit: l, offset } = paginate(page, limit);
-  const total = (
-    await db.get<{ c: number }>(
+  const [count, rows] = await Promise.all([
+    db.get<{ c: number }>(
       `SELECT COUNT(*) AS c FROM book_series bs
          JOIN books b ON b.id = bs.book_id
         WHERE bs.ser_id = ? AND b.avail <> 0`,
       [serId],
-    )
-  )!.c;
-  const rows = await db.all<BookRow>(
-    `SELECT b.*, bs.ser_no FROM books b
-     JOIN book_series bs ON bs.book_id = b.id
-     WHERE bs.ser_id = @id AND b.avail <> 0
-     ORDER BY bs.ser_no, b.search_title
-     LIMIT @limit OFFSET @offset`,
-    { id: serId, limit: l, offset },
-  );
-  return { items: await hydrateAll(rows), ...pageMeta(total, p, l) };
+    ),
+    db.all<BookRow>(
+      `SELECT b.*, bs.ser_no FROM books b
+       JOIN book_series bs ON bs.book_id = b.id
+       WHERE bs.ser_id = @id AND b.avail <> 0
+       ORDER BY bs.ser_no, b.search_title
+       LIMIT @limit OFFSET @offset`,
+      { id: serId, limit: l, offset },
+    ),
+  ]);
+  return { items: await hydrateAll(rows), ...pageMeta(count!.c, p, l) };
 }
 
 export async function booksByGenre(
@@ -364,23 +482,23 @@ export async function booksByGenre(
   { page = 1, limit }: PageOpts = {},
 ): Promise<Page<Book>> {
   const { page: p, limit: l, offset } = paginate(page, limit);
-  const total = (
-    await db.get<{ c: number }>(
+  const [count, rows] = await Promise.all([
+    db.get<{ c: number }>(
       `SELECT COUNT(*) AS c FROM book_genres bg
          JOIN books b ON b.id = bg.book_id
         WHERE bg.genre_id = ? AND b.avail <> 0`,
       [genreId],
-    )
-  )!.c;
-  const rows = await db.all<BookRow>(
-    `SELECT b.* FROM books b
-     JOIN book_genres bg ON bg.book_id = b.id
-     WHERE bg.genre_id = @id AND b.avail <> 0
-     ORDER BY b.search_title, b.doc_date DESC
-     LIMIT @limit OFFSET @offset`,
-    { id: genreId, limit: l, offset },
-  );
-  return { items: await hydrateAll(rows), ...pageMeta(total, p, l) };
+    ),
+    db.all<BookRow>(
+      `SELECT b.* FROM books b
+       JOIN book_genres bg ON bg.book_id = b.id
+       WHERE bg.genre_id = @id AND b.avail <> 0
+       ORDER BY b.search_title, b.doc_date DESC
+       LIMIT @limit OFFSET @offset`,
+      { id: genreId, limit: l, offset },
+    ),
+  ]);
+  return { items: await hydrateAll(rows), ...pageMeta(count!.c, p, l) };
 }
 
 export async function booksByCatalog(
@@ -390,18 +508,18 @@ export async function booksByCatalog(
   const { page: p, limit: l, offset } = paginate(page, limit);
   const where = catId ? 'catalog_id = @id' : 'catalog_id IS NULL';
   const params = catId ? { id: catId, limit: l, offset } : { limit: l, offset };
-  const total = (
-    await db.get<{ c: number }>(
+  const [count, rows] = await Promise.all([
+    db.get<{ c: number }>(
       `SELECT COUNT(*) AS c FROM books WHERE ${where} AND avail <> 0`,
       catId ? { id: catId } : {},
-    )
-  )!.c;
-  const rows = await db.all<BookRow>(
-    `SELECT * FROM books WHERE ${where} AND avail <> 0
-     ORDER BY search_title LIMIT @limit OFFSET @offset`,
-    params,
-  );
-  return { items: await hydrateAll(rows), ...pageMeta(total, p, l) };
+    ),
+    db.all<BookRow>(
+      `SELECT * FROM books WHERE ${where} AND avail <> 0
+       ORDER BY search_title LIMIT @limit OFFSET @offset`,
+      params,
+    ),
+  ]);
+  return { items: await hydrateAll(rows), ...pageMeta(count!.c, p, l) };
 }
 
 export async function childCatalogs(parentId: number | null): Promise<CatalogChild[]> {
@@ -474,20 +592,20 @@ async function listBy<T>({
   if (langCode) params.langCode = langCode;
   const countParams: Record<string, string | number> = { like };
   if (langCode) countParams.langCode = langCode;
-  const total = (
-    await db.get<{ c: number }>(
+  const [count, rows] = await Promise.all([
+    db.get<{ c: number }>(
       `SELECT COUNT(*) AS c FROM ${table} WHERE ${searchCol} LIKE @like ${langClause} ${extraWhere}`,
       countParams,
-    )
-  )!.c;
-  const rows = await db.all<unknown>(
-    `SELECT ${extraCols}${countExpr ? `, ${countExpr} AS book_count` : ''}
-     FROM ${table} WHERE ${searchCol} LIKE @like ${langClause} ${extraWhere}
-     ORDER BY ${searchCol} LIMIT @limit OFFSET @offset`,
-    params,
-  );
+    ),
+    db.all<unknown>(
+      `SELECT ${extraCols}${countExpr ? `, ${countExpr} AS book_count` : ''}
+       FROM ${table} WHERE ${searchCol} LIKE @like ${langClause} ${extraWhere}
+       ORDER BY ${searchCol} LIMIT @limit OFFSET @offset`,
+      params,
+    ),
+  ]);
   const items = hydrate ? await hydrateAll(rows as BookRow[]) : (rows as T[]);
-  return { items: items as T[], ...pageMeta(total, p, l) };
+  return { items: items as T[], ...pageMeta(count!.c, p, l) };
 }
 
 export function listAuthors({

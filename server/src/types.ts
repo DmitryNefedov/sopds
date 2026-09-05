@@ -138,6 +138,9 @@ export interface PageMeta {
   pages: number;
   has_next: boolean;
   has_prev: boolean;
+  /** Set by a pass that counted nothing, so `total` is what it returned rather
+   *  than what exists. The quick half of a search sets it. */
+  partial?: boolean;
 }
 
 export type Page<T> = { items: T[] } & PageMeta;

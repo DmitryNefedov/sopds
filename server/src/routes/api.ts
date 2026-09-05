@@ -8,6 +8,7 @@ import { mimeFor, zipWrap, translitName } from '../utils/download.js';
 import { S } from '../services/settings.js';
 import { convert, CONVERTIBLE, converterInfo, ConvertError } from '../services/convert/index.js';
 import { ah, qstr } from '../utils/http.js';
+import type { SearchMatch } from '../services/catalog.js';
 import type { PageOpts } from '../types.js';
 
 const router = Router();
@@ -18,20 +19,26 @@ const opts = (req: Request): PageOpts => ({
 });
 
 // ---- unified search ----------------------------------------------------
-// GET /api/search?q=...&type=all|books|authors|series
+// GET /api/search?q=...&type=all|books|authors|series&match=prefix|all
+//
+// `match=prefix` is the fast, anchored half of a search; clients run it
+// alongside the default `all` and paint whichever lands first. Every type is
+// its own request, so none of them waits on another.
 router.get(
   '/search',
   ah(async (req, res) => {
     const q = qstr(req.query.q).trim();
     const type = qstr(req.query.type, 'all');
-    if (!q) return res.json({ query: '', type, results: null });
+    const match: SearchMatch = qstr(req.query.match) === 'prefix' ? 'prefix' : 'all';
+    const page = { ...opts(req), match };
+    if (!q) return res.json({ query: '', type, match, results: null });
     if (type === 'books')
-      return res.json({ query: q, type, results: await repo.searchBooks(q, opts(req)) });
+      return res.json({ query: q, type, match, results: await repo.searchBooks(q, page) });
     if (type === 'authors')
-      return res.json({ query: q, type, results: await repo.searchAuthors(q, opts(req)) });
+      return res.json({ query: q, type, match, results: await repo.searchAuthors(q, page) });
     if (type === 'series')
-      return res.json({ query: q, type, results: await repo.searchSeries(q, opts(req)) });
-    return res.json({ query: q, type: 'all', results: await repo.searchAll(q) });
+      return res.json({ query: q, type, match, results: await repo.searchSeries(q, page) });
+    return res.json({ query: q, type: 'all', match, results: await repo.searchAll(q, { match }) });
   }),
 );
 

@@ -11,7 +11,7 @@ import {
   Tabs,
   Typography,
 } from '@mui/material';
-import { useApi } from '../api.js';
+import { useApi, useBookSearch } from '../api.js';
 import { Async, BookGrid, Empty, ErrorState, Pager } from '../components/common.jsx';
 
 const PREVIEW_LIMIT = 10;
@@ -47,6 +47,63 @@ function BookResults({ items }) {
   return <BookGrid books={items} />;
 }
 
+/** The "See all N" link under a section, styled as a link but really a button
+ *  because it switches tab rather than navigating. */
+function SeeAll({ onClick, children }) {
+  return (
+    <Box
+      component="button"
+      onClick={onClick}
+      sx={{
+        background: 'none',
+        border: 0,
+        p: 0,
+        cursor: 'pointer',
+        font: 'inherit',
+        color: 'primary.main',
+        textDecoration: 'underline',
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
+/**
+ * The books half of a search, in two passes. The anchored pass usually lands
+ * first and its results are rendered immediately — fully interactive, covers
+ * and download buttons and all — while the full substring pass is still
+ * running. When that lands its extra results are appended below.
+ */
+function BookPhase({ search, children }) {
+  const { items, meta, phase, error, reload } = search;
+  const partial = phase === 'partial';
+  // A failed search that still has quick matches keeps showing them: they are
+  // real results, and the error only says the rest could not be fetched.
+  if (error && !items.length) return <ErrorState error={error} onRetry={reload} />;
+  return (
+    <>
+      {(phase === 'loading' || partial) && <LinearProgress sx={{ mb: 1 }} />}
+      {error && <ErrorState error={error} onRetry={reload} />}
+      {partial && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          Showing {items.length} quick {items.length === 1 ? 'match' : 'matches'} — still
+          searching the rest of the catalog…
+        </Typography>
+      )}
+      {phase !== 'loading' && <BookResults items={items} />}
+      {children?.({ meta, phase })}
+    </>
+  );
+}
+
+/** The count in a section heading, which is unknown until the full pass lands. */
+function BookCount({ search }) {
+  if (search.phase === 'partial') return <span>(searching…)</span>;
+  if (!search.meta) return null;
+  return <span>({search.meta.total})</span>;
+}
+
 /**
  * One section of the overview. Each type is fetched by its own request, so a
  * section paints the moment its own results land instead of waiting for the
@@ -76,21 +133,7 @@ function ResultSection({ title, query, render, seeAll }) {
           {render(results.items)}
           {results.total > results.items.length && (
             <Typography variant="body2" sx={{ mt: 1 }}>
-              <Box
-                component="button"
-                onClick={seeAll}
-                sx={{
-                  background: 'none',
-                  border: 0,
-                  p: 0,
-                  cursor: 'pointer',
-                  font: 'inherit',
-                  color: 'primary.main',
-                  textDecoration: 'underline',
-                }}
-              >
-                See all {results.total}
-              </Box>
+              <SeeAll onClick={seeAll}>See all {results.total}</SeeAll>
             </Typography>
           )}
         </>
@@ -115,12 +158,15 @@ export default function SearchResults() {
   // instead of every section waiting on the slowest.
   const previewUrl = (type) =>
     overview && q ? `/search?q=${qs}&type=${type}&page=1&limit=${PREVIEW_LIMIT}` : null;
-  const books = useApi(previewUrl('books'), [q, overview]);
   const authors = useApi(previewUrl('authors'), [q, overview]);
   const series = useApi(previewUrl('series'), [q, overview]);
+  // Books run as two passes of their own, so the section can paint the fast
+  // half while the slow one is still in flight.
+  const books = useBookSearch(overview ? q : '', { limit: PREVIEW_LIMIT });
 
+  const singleBooks = useBookSearch(!overview && tab === 'books' ? q : '', { page });
   const single = useApi(
-    !overview && q ? `/search?q=${qs}&type=${tab}&page=${page}` : null,
+    !overview && tab !== 'books' && q ? `/search?q=${qs}&type=${tab}&page=${page}` : null,
     [q, tab, page, overview],
   );
 
@@ -143,12 +189,23 @@ export default function SearchResults() {
         // result people are looking for, and a section that appears only
         // sometimes moves everything below it around.
         <>
-          <ResultSection
-            title="Books"
-            query={books}
-            render={(items) => <BookResults items={items} />}
-            seeAll={() => setTab('books')}
-          />
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" gutterBottom>
+              Books{' '}
+              <Typography component="span" color="text.secondary">
+                <BookCount search={books} />
+              </Typography>
+            </Typography>
+            <BookPhase search={books}>
+              {({ meta }) =>
+                meta && meta.total > books.items.length ? (
+                  <Typography variant="body2" sx={{ mt: 1 }}>
+                    <SeeAll onClick={() => setTab('books')}>See all {meta.total}</SeeAll>
+                  </Typography>
+                ) : null
+              }
+            </BookPhase>
+          </Box>
           <Divider />
           <ResultSection
             title="Authors"
@@ -164,6 +221,10 @@ export default function SearchResults() {
             seeAll={() => setTab('series')}
           />
         </>
+      ) : tab === 'books' ? (
+        <BookPhase search={singleBooks}>
+          {({ meta }) => <Pager meta={meta} page={page} onChange={setPage} />}
+        </BookPhase>
       ) : (
         <Async query={single}>
           {(data) => {
@@ -171,7 +232,6 @@ export default function SearchResults() {
             if (!r) return <Empty />;
             return (
               <>
-                {tab === 'books' && <BookResults items={r.items} />}
                 {tab === 'authors' && <AuthorList items={r.items} />}
                 {tab === 'series' && <SeriesList items={r.items} />}
                 <Pager meta={r} page={page} onChange={setPage} />
