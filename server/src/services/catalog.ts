@@ -262,6 +262,27 @@ const QUICK_BOOK_IDS = `
  *  would, small enough that the scan stops almost immediately. */
 const quickCap = (limit: number): number => Math.max(limit * 5, 200);
 
+/**
+ * Collapse editions that share a title and author set, the way the full pass's
+ * `DISTINCT ON (dkey, akey)` does — but in memory, over one already-fetched
+ * page instead of the whole match set, which is what the quick pass cannot
+ * afford. Rows arrive newest-first within a group, so the first wins.
+ *
+ * Without this a book held both loosely and inside a `.zip` shows up twice in
+ * the partial phase, and since merging only ever appends, the duplicate then
+ * survives the full pass that would have collapsed it.
+ */
+function collapseDoubles(books: Book[]): Book[] {
+  const byKey = new Map<string, Book>();
+  for (const b of books) {
+    const key = `${b.title.toUpperCase()} ${b.authors.map((a) => a.id).sort().join(',')}`;
+    const kept = byKey.get(key);
+    if (kept) kept.doubles = (kept.doubles ?? 0) + 1;
+    else byKey.set(key, { ...b, doubles: 0 });
+  }
+  return [...byKey.values()];
+}
+
 /** A page that counted nothing: `total` is what was found, not what exists. */
 function partialPage<T>(items: T[], limit: number): Page<T> {
   return {
@@ -284,8 +305,10 @@ export async function searchBooks(
   const { page: p, limit: l, offset } = paginate(page, limit);
 
   if (match === 'prefix') {
-    const rows = await db.all<BookRow>(QUICK_BOOK_IDS, { like, cap: quickCap(l), limit: l });
-    return partialPage(await hydrateAll(rows), l);
+    // Over-fetch so collapsing duplicates below still fills the page.
+    const rows = await db.all<BookRow>(QUICK_BOOK_IDS, { like, cap: quickCap(l), limit: l * 2 });
+    const books = await hydrateAll(rows);
+    return partialPage((S.doublesHide ? collapseDoubles(books) : books).slice(0, l), l);
   }
 
   const dedup = S.doublesHide;

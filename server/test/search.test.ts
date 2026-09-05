@@ -350,3 +350,46 @@ test('the quick pass ignores paging and always answers the first page', async ()
     (await repo.searchBooks('watch', { match: 'prefix', page: 1, limit: 1 })).items.map((b) => b.id),
   );
 });
+
+test('the quick pass collapses duplicate editions like the full pass', async () => {
+  // A book held both loosely and inside a .zip is two rows with one identity.
+  // The quick pass has to collapse them itself: merging only ever appends, so a
+  // duplicate it emits would outlive the full pass that would have removed it.
+  const settings = await import('../src/services/settings.js');
+  const dupTitle = 'Twice Over';
+  const rows = await Promise.all(
+    ['loose.fb2', 'zipped.fb2'].map((f, i) =>
+      db.get<{ id: number }>(
+        `INSERT INTO books (filename, path, format, title, search_title, doc_date, lang_code, avail)
+         VALUES (?, ?, 'fb2', ?, ?, ?, 1, 2) RETURNING id`,
+        [f, `p${i}`, dupTitle, normalize(dupTitle), `200${i}`],
+      ),
+    ),
+  );
+  const author = (await db.get<{ id: number }>(
+    'INSERT INTO authors (full_name, search_full_name, lang_code) VALUES (?, ?, 1) RETURNING id',
+    ['Twin Author', normalize('Twin Author')],
+  ))!.id;
+  for (const r of rows) {
+    await db.run('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)', [r!.id, author]);
+  }
+
+  try {
+    await settings.setMany({ doublesHide: true });
+    const quick = await repo.searchBooks('twice', { match: 'prefix' });
+    const full = await repo.searchBooks('twice', {});
+    assert.equal(quick.items.length, 1, 'the quick pass collapses the pair');
+    assert.equal(full.items.length, 1, 'and so does the full pass');
+    assert.equal(quick.items[0].doubles, 1, 'the collapsed edition is counted');
+    assert.equal(quick.items[0].id, full.items[0].id, 'both keep the same edition');
+
+    // With the setting off, both passes show both editions again.
+    await settings.setMany({ doublesHide: false });
+    assert.equal((await repo.searchBooks('twice', { match: 'prefix' })).items.length, 2);
+    assert.equal((await repo.searchBooks('twice', {})).items.length, 2);
+  } finally {
+    await settings.setMany({ doublesHide: false });
+    await db.run('DELETE FROM books WHERE title = ?', [dupTitle]);
+    await db.run('DELETE FROM authors WHERE id = ?', [author]);
+  }
+});
