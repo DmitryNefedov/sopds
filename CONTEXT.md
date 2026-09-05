@@ -55,6 +55,15 @@ term; this file is the prose.
   200k — no better than the full pass — because `COUNT(*) OVER ()` and the
   dedup `GROUP BY` walk the whole match set regardless of how the rows were
   found.
+- **Random book** (`catalog.randomBook`) — `ORDER BY random()` sorts the whole
+  table by a per-row random key, a full scan no index can help with; on a
+  large catalog that dominated `GET /api/random`. `pickRandomBookId` instead
+  picks a random point in the id space and takes the nearest available id at
+  or after it, an index-backed lookup. `__state.randomBookId` caches one
+  pre-picked id (via `Settings`'s `getState`, an in-memory read — no query at
+  all to check it); a request serves it with a plain primary-key lookup, then
+  fires off `refreshRandomBookId` in the background, unawaited, to line up the
+  next one. A stale or missing cached id falls back to picking synchronously.
 - **Batched hydration** — `catalog.hydrateAll` loads a whole page's authors,
   genres and series with three `= ANY(...)` queries instead of three per book.
 - **Scan** — walk the collection, upsert Books/Authors/Series/Genres, mark

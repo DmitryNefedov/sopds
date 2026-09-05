@@ -10,7 +10,7 @@ process.env.SOPDS_TEST_DB ??= 'mem';
 const { default: db } = await import('../src/db/index.js');
 const { initSchema, updateCounters } = await import('../src/db/schema.js');
 const repo = await import('../src/services/catalog.js');
-const { loadSettings, setMany } = await import('../src/services/settings.js');
+const { loadSettings, setMany, getState, setState } = await import('../src/services/settings.js');
 const { normalize } = await import('../src/utils/lang.js');
 
 const TABLES = [
@@ -205,4 +205,45 @@ test('randomBook returns a hydrated book', async () => {
   const book = await repo.randomBook();
   assert.ok(book && typeof book.title === 'string');
   assert.ok(Array.isArray(book.authors));
+});
+
+// randomBook used to be `ORDER BY random() LIMIT 1`, a full-table sort with no
+// index to help it, and no `avail` filter at all. These pin down its
+// replacement: an index-backed pick that never surfaces an unavailable book,
+// served from a cache that a request only ever misses once.
+
+test('randomBook never returns a book that has become unavailable', async () => {
+  for (let i = 0; i < 20; i++) {
+    const book = await repo.randomBook();
+    assert.notEqual(book!.id, ids.hidden, 'the withdrawn edition is never picked');
+  }
+});
+
+test('pickRandomBookId only ever lands on an available row', async () => {
+  const available = new Set([ids.alpha, ids.beta, ids.gamma]);
+  for (let i = 0; i < 30; i++) {
+    const id = await repo.pickRandomBookId();
+    assert.ok(id != null && available.has(id), `picked ${id}, expected one of the available ids`);
+  }
+});
+
+test('randomBook serves the cached id directly, with no picking involved', async () => {
+  await setState('randomBookId', ids.beta);
+  const book = await repo.randomBook();
+  assert.equal(book!.id, ids.beta);
+});
+
+test('randomBook recovers when the cached id no longer resolves to a book', async () => {
+  await setState('randomBookId', 999_999);
+  const book = await repo.randomBook();
+  assert.ok(book, 'a fresh pick stands in for the stale one');
+  assert.notEqual(book!.id, 999_999);
+});
+
+test('refreshRandomBookId leaves a fresh, available id behind for the next call', async () => {
+  await setState('randomBookId', null);
+  await repo.refreshRandomBookId();
+  const cached = getState<number>('randomBookId');
+  assert.ok(cached != null, 'a real request never awaits this, but it does eventually land');
+  assert.ok([ids.alpha, ids.beta, ids.gamma].includes(cached!));
 });

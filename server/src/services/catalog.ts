@@ -1,7 +1,7 @@
 import db from '../db/index.js';
 import type { SqlParam } from '../db/index.js';
 import type { BookRef } from '../connectors/bookfiles.js';
-import { S } from './settings.js';
+import { S, getState, setState } from './settings.js';
 import { normalize } from '../utils/lang.js';
 import type {
   Book,
@@ -720,6 +720,68 @@ export async function stats(): Promise<Stats> {
   };
 }
 
+// ---- random book ---------------------------------------------------------
+//
+// `ORDER BY random()` assigns every row a random key and sorts by it, which no
+// index can help with — on a 700k-book catalog that full scan is most of what
+// `/api/random` was waiting on. Two things fix it: a way to land on *a* row
+// through the primary key index instead of scanning the table, and a cache
+// that removes even that from the request the user is waiting on.
+//
+// `__state.randomBookId` holds one pre-picked id. `randomBook()` serves it
+// with a plain primary-key lookup — as fast as any query gets — then, once
+// that id is on its way out the door, quietly picks the next one in the
+// background so the following call is just as fast. `getState` reads an
+// in-memory cache, so even the cache check costs no round trip.
+
+/**
+ * Land on one available book id without scanning the table: pick a random
+ * point between the smallest and largest available id, and take the nearest
+ * available id at or after it. Because `point` never exceeds `max`, and `max`
+ * is itself an available id, that forward query always finds a row — except
+ * in the narrow window where a concurrent scan deletes it between the two
+ * queries, which the backward fallback covers. Both queries use the primary
+ * key index, not a sequential scan.
+ */
+export async function pickRandomBookId(): Promise<number | null> {
+  const bounds = await db.get<{ min: number; max: number }>(
+    'SELECT MIN(id) AS min, MAX(id) AS max FROM books WHERE avail <> 0',
+  );
+  if (!bounds || bounds.min == null) return null;
+  const point = bounds.min + Math.floor(Math.random() * (bounds.max - bounds.min + 1));
+  const forward = await db.get<{ id: number }>(
+    'SELECT id FROM books WHERE avail <> 0 AND id >= ? ORDER BY id LIMIT 1',
+    [point],
+  );
+  if (forward) return forward.id;
+  const backward = await db.get<{ id: number }>(
+    'SELECT id FROM books WHERE avail <> 0 AND id < ? ORDER BY id DESC LIMIT 1',
+    [point],
+  );
+  return backward ? backward.id : null;
+}
+
+/** Pick a fresh random id and cache it for the next `randomBook()` call.
+ *  Never awaited by a request: a failure here just means the next call falls
+ *  back to picking one synchronously, same as a cold cache. */
+export async function refreshRandomBookId(): Promise<void> {
+  try {
+    const id = await pickRandomBookId();
+    if (id != null) await setState('randomBookId', id);
+  } catch {
+    /* best-effort cache; the next call recovers on its own */
+  }
+}
+
 export async function randomBook(): Promise<Book | null> {
-  return hydrateBook(await db.get<BookRow>('SELECT * FROM books ORDER BY random() LIMIT 1'));
+  const cachedId = getState<number>('randomBookId');
+  const cached = cachedId != null ? await getBook(cachedId) : null;
+  // Line up the next pick regardless of whether this one hit, so the cache
+  // never serves the same id twice in a row.
+  void refreshRandomBookId();
+  if (cached) return cached;
+  // Cold cache, or the cached id's book has since vanished: pick one now
+  // rather than send this request back empty.
+  const id = await pickRandomBookId();
+  return id == null ? null : getBook(id);
 }
