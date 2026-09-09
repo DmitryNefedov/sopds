@@ -10,7 +10,11 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Built from postgres:16-alpine + the schema, applied by Liquibase at
+    # build time and baked into the image (see server/Dockerfile.postgres).
+    build:
+      context: ./server
+      dockerfile: Dockerfile.postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sopds}

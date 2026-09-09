@@ -23,8 +23,8 @@ export interface BookRow {
   annotation: string;
   lang_code: number;
   avail: number;
-  /** Location of the entry inside its `.zip` (see schema.sql); null for loose
-   *  files and for rows catalogued before the scan recorded them. */
+  /** Location of the entry inside its `.zip` (see db/changelog/changelog.sql);
+   *  null for loose files and for rows catalogued before the scan recorded them. */
   zip_offset: number | null;
   zip_csize: number | null;
   zip_method: number | null;

@@ -5,18 +5,27 @@ import { backend } from './backend.js';
 import { SERVER_ROOT } from '../config/paths.js';
 
 // Everything that brings an empty database up to a usable catalog: waiting for
-// the server, applying schema.sql, seeding genres, indexes and counters.
+// the server, applying the schema changelog, seeding genres, indexes and counters.
+
+// The schema lives in `db/changelog/changelog.sql` as a Liquibase changelog.
+// The compose Postgres image bakes it in via Liquibase at build time
+// (server/Dockerfile.postgres), so there it is already present. This path is
+// the lightweight fallback for `npm run dev` against a plain Postgres and for
+// the PGlite test backend, which Liquibase cannot target: a Liquibase
+// *formatted SQL* changelog is also valid SQL — every directive is a `--`
+// comment — so it can be executed verbatim, and every statement is guarded
+// with `IF NOT EXISTS`.
+const CHANGELOG = path.join(SERVER_ROOT, 'db', 'changelog', 'changelog.sql');
 
 let schemaReady: Promise<void> | null = null;
 
-/** Apply `schema.sql` and seed the genre fixture. Idempotent, and runs at most
- *  once per process however many callers await it. */
+/** Apply the schema changelog and seed the genre fixture. Idempotent, and runs
+ *  at most once per process however many callers await it. */
 export function initSchema(): Promise<void> {
   if (schemaReady) return schemaReady;
   schemaReady = (async () => {
     await waitForPostgres();
-    const schema = fs.readFileSync(path.join(SERVER_ROOT, 'schema.sql'), 'utf8');
-    await backend.execScript(schema);
+    await backend.execScript(fs.readFileSync(CHANGELOG, 'utf8'));
     await seedGenres();
   })();
   return schemaReady;
@@ -70,7 +79,7 @@ const TRIGRAM_INDEXES: [string, string, string][] = [
 ];
 
 // The quick half of a search is now an exact `=` match, which the plain btree
-// indexes in schema.sql (`idx_books_search_title` and friends) already serve —
+// btree indexes in the changelog (`idx_books_search_title` and friends) serve —
 // no extra index needed. An earlier version anchored on a prefix instead and
 // built `text_pattern_ops` indexes for it; those are dropped here so a
 // redeploy from that version does not carry dead weight.
@@ -100,7 +109,7 @@ async function createIndex(name: string, sql: string, log: (m: string) => void):
  * transaction, hence `backend.query` rather than `db.tx`.
  *
  * Returns whether substring search is indexed. Exact search needs nothing from
- * here: it runs off the indexes schema.sql already creates.
+ * here: it runs off the indexes the schema changelog already creates.
  */
 export async function ensureSearchIndexes(log = console.log): Promise<boolean> {
   for (const name of RETIRED_INDEXES) {

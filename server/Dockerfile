@@ -38,9 +38,12 @@ COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --prefer-offline --no-audit --no-fund
 
-# compiled JS + the runtime data files it reads (resolved via SERVER_ROOT)
+# compiled JS + the runtime data files it reads (resolved via SERVER_ROOT).
+# db/changelog/ is the schema fallback for a plain Postgres; the compose image
+# (Dockerfile.postgres) already has it baked in, so there initSchema is a no-op.
 COPY --from=build /app/dist ./dist
-COPY schema.sql genres.json ./
+COPY genres.json ./
+COPY db ./db
 COPY assets ./assets
 
 # QT_QPA_PLATFORM: Calibre links Qt even for its command-line tools, and without

@@ -9,7 +9,7 @@ This repository was **rewritten from Django to a Node.js + React stack**:
 |----------|----------------------------|---------------------------------------------|
 | API      | Django + django-constance  | **Express** (`server/`), **TypeScript**, ESM |
 | UI       | Django templates + Foundation | **React + Vite + MUI** (`web/`)          |
-| DB       | Django ORM / sqlite3       | **PostgreSQL** (`server/schema.sql`, `node-postgres`) |
+| DB       | Django ORM / sqlite3       | **PostgreSQL** (Liquibase changelog in `server/db/changelog/`, `node-postgres`) |
 | Scanner  | `sopds_scanner` mgmt command | `npm --workspace server run scan` + in-app scheduler |
 | OPDS feed| `opds_catalog.feeds`       | `server/src/routes/opds.ts` (Atom / OPDS 1.1)|
 | Converters| external `fb2epub` / `fb2mobi` binaries | built-in TS `server/src/services/convert/`, or Calibre |
@@ -96,7 +96,7 @@ stack is defined in [`docker-compose.yml`](docker-compose.yml) — three service
 
 | Service | Image | Role |
 |---|---|---|
-| `postgres` | `postgres:16-alpine` | catalog database, data in a volume |
+| `postgres` | built from [`server/Dockerfile.postgres`](server/Dockerfile.postgres) | `postgres:16-alpine` with the schema baked in by Liquibase at build time |
 | `api` | built from [`server/Dockerfile`](server/Dockerfile) | Express API + scanner + OPDS feed |
 | `ui` | built from [`web/Dockerfile`](web/Dockerfile) | nginx serving the React build, reverse-proxying `/api`, `/opds`, `/debug`, `/healthz` to `api` |
 
@@ -125,8 +125,12 @@ Edit `.env`:
 ### 2. Build
 
 ```bash
-docker compose build          # builds the api and ui images
+docker compose build          # builds the postgres, api and ui images
 ```
+
+Building `postgres` runs Liquibase against a throwaway server and bakes the
+resulting schema (tables, indexes and Liquibase's `DATABASECHANGELOG`) into the
+image's init scripts, so a fresh database comes up ready — no runtime migration.
 
 ### 3. Deploy
 
@@ -138,9 +142,9 @@ docker compose exec api node dist/bin/scan.js   # first import of the collection
 - Web UI: `http://<host>:8080`
 - OPDS feed for e-reader apps: `http://<host>:8000/opds/` (also reachable at `http://<host>:8080/opds/`)
 
-`docker compose up -d --build` does the build and the start in one step. The `api`
-container waits for `postgres` to become healthy and creates the schema itself on
-first boot — no migration step.
+`docker compose up -d --build` does the build and the start in one step. The
+`postgres` image already carries the schema (baked in by Liquibase at build
+time); `api` just waits for `postgres` to become healthy.
 
 Keeping the catalog current after the first import: turn on **scheduled scans**
 and/or **folder-watch** on the `/settings` page (both run inside the `api`
@@ -164,9 +168,11 @@ git pull
 docker compose up -d --build      # rebuild changed images, recreate containers
 ```
 
-The database volume is preserved across rebuilds, so the catalog survives. If the
-schema changed, the `api` container applies additive changes (`CREATE TABLE /
-INDEX IF NOT EXISTS`) on boot.
+The database volume is preserved across rebuilds, so the catalog survives. Schema
+changes are new changesets in `server/db/changelog/`; the baked init script only
+runs on a fresh volume, so apply changes to an existing database by running
+Liquibase against it (`docker compose exec` a one-off, or point Liquibase at the
+exposed port) before deploying the new images.
 
 ### Deploying on a server
 

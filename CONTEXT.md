@@ -45,8 +45,8 @@ term; this file is the prose.
   being searched. Only page 1 runs both passes; later pages are offsets into
   the full result, which the exact pass cannot align with.
 
-  The exact pass needs no index beyond the plain btrees schema.sql already
-  creates (`idx_books_search_title` and friends) — `=` is what those serve. An
+  The exact pass needs no index beyond the plain btrees the schema changelog
+  already creates (`idx_books_search_title` and friends) — `=` is what those serve. An
   earlier version anchored a prefix instead and required a dedicated
   `text_pattern_ops` index just to make the planner use it; exact needs neither
   that index nor the tuning, and returns far fewer rows to begin with. What

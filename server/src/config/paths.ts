@@ -15,7 +15,7 @@ function findUp(name: string, from: string): string {
 /**
  * The `server/` directory, resolved the same way whether the code runs from
  * `src/` (via tsx) or from the compiled `dist/` tree. Non-code assets
- * (`schema.sql`, `genres.json`, `assets/`) are read relative to this.
+ * (`db/changelog/`, `genres.json`, `assets/`) are read relative to this.
  */
 export const SERVER_ROOT = findUp(
   'package.json',

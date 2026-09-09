@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1
+# SimpleOPDS PostgreSQL image. Build context: ./server
+#
+# The schema is a Liquibase changelog (db/changelog/). This build runs Liquibase
+# once, at image-build time, against a throwaway PostgreSQL server, then bakes
+# the resulting dump — tables, indexes and Liquibase's own DATABASECHANGELOG
+# bookkeeping — into /docker-entrypoint-initdb.d. The stock entrypoint replays
+# that dump the first time a data directory is initialised, so a fresh
+# `docker compose up` comes up with the full schema and no runtime Liquibase
+# step. `initdb.d` (rather than a pre-populated PGDATA) is what lets the same
+# image work whether the compose file points the data volume at a named volume
+# or a bind mount.
+
+FROM postgres:16-alpine AS schema
+
+# Liquibase ships its own JRE nowhere, so bring one; the CLI and the bundled
+# JDBC drivers come straight from the official Liquibase image.
+RUN apk add --no-cache openjdk17-jre-headless
+COPY --from=liquibase/liquibase:4.31-alpine /liquibase /liquibase
+ENV PATH="/liquibase:${PATH}"
+
+COPY db/changelog /changelog
+
+# Start a scratch cluster, apply the changelog, dump it, shut down. Running it
+# for real (not `update-sql` offline) validates every statement at build time
+# and captures the populated DATABASECHANGELOG.
+RUN set -eux; \
+    export PGDATA=/tmp/pgdata LANG=C.UTF-8; \
+    mkdir -p "$PGDATA" && chown postgres "$PGDATA"; \
+    su postgres -c "initdb -U postgres --auth=trust --encoding=UTF8"; \
+    su postgres -c "pg_ctl -w -o '-c listen_addresses=127.0.0.1' start"; \
+    su postgres -c "createdb -U postgres sopds"; \
+    liquibase --headless=true \
+      --changelog-file=/changelog/changelog.sql \
+      --url="jdbc:postgresql://127.0.0.1:5432/sopds" \
+      --username=postgres --password="" \
+      update; \
+    su postgres -c "pg_dump -U postgres --no-owner --no-privileges sopds" > /schema.sql; \
+    su postgres -c "pg_ctl -w stop"; \
+    test -s /schema.sql
+
+FROM postgres:16-alpine
+COPY --from=schema /schema.sql /docker-entrypoint-initdb.d/10-schema.sql

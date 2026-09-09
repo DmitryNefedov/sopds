@@ -11,7 +11,7 @@ export interface Backend {
   query: RawRunner;
   connect(): Promise<{ query: RawRunner; release(): void }>;
   end(): Promise<void>;
-  /** Run a multi-statement script (schema.sql) with no parameters. */
+  /** Run a multi-statement script (the schema changelog) with no parameters. */
   execScript(sql: string): Promise<unknown>;
 }
 
