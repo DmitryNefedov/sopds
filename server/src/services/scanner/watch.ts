@@ -14,37 +14,58 @@ let settled: (() => void) | null = null;
 
 const BOOK_LIKE = /\.(fb2|epub|mobi|pdf|djvu|zip)$/i;
 
-function bookRelevant(name: string | null): boolean {
+export function bookRelevant(name: string | null): boolean {
   // directories have no extension; treat "no ext" as a possible dir event
   return !name || !path.extname(name) || BOOK_LIKE.test(name);
 }
 
+/** The debounce window in milliseconds: `seconds` seconds, at least 1s, falling
+ *  back to 5s for a missing / non-numeric / zero value. Defaults to the setting. */
+export function debounceMs(seconds: unknown = S.watchDebounce): number {
+  return Math.max(1, Number(seconds) || 5) * 1000;
+}
+
 function scheduleSettled(): void {
+  // Stryker disable next-line ConditionalExpression: `clearTimeout(null)` is a
+  // harmless no-op, so forcing this branch always-on changes nothing.
   if (debounceTimer) clearTimeout(debounceTimer);
-  const wait = Math.max(1, Number(S.watchDebounce) || 5) * 1000;
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
+    // Stryker disable next-line OptionalChaining: stopWatch() clears both the
+    // timer and `settled`, so the callback never fires with a null `settled`.
     settled?.();
-  }, wait);
+  }, debounceMs());
+}
+
+export function handleDirEvent(eventType: string, filename: string | Buffer | null): void {
+  // Stryker disable next-line ConditionalExpression: fs.watch yields a string or
+  // null, and bookRelevant() treats null and "null" identically, so this only
+  // affects a Buffer filename (rare) - either way it stays book-relevant.
+  const name = filename == null ? null : String(filename);
+  // A rename on a directory entry may mean a new/removed sub-directory: rebuild
+  // the watch set (cheap) so we keep seeing deep changes.
+  // Stryker disable next-line ConditionalExpression: syncWatchers() is idempotent,
+  // so running it on a non-rename event too is wasted work with the same result.
+  if (eventType === 'rename') syncWatchers(watchedRoot);
+  if (bookRelevant(name)) scheduleSettled();
 }
 
 function onDirEvent(): (eventType: string, filename: string | Buffer | null) => void {
-  return (eventType, filename) => {
-    const name = typeof filename === 'string' ? filename : filename ? filename.toString() : null;
-    // A rename on a directory entry may mean a new/removed sub-directory:
-    // rebuild the watch set (cheap) so we keep seeing deep changes.
-    if (eventType === 'rename') syncWatchers(watchedRoot);
-    if (bookRelevant(name)) scheduleSettled();
-  };
+  return handleDirEvent;
 }
 
 function syncWatchers(root: string | null): void {
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: a falsy or
+  // missing root also makes the readdir/fs.watch calls below throw (into their
+  // own catches), leaving the watcher set empty just the same.
   if (!root || !fs.existsSync(root)) return;
   const wanted = new Set<string>([root]);
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
+      // Stryker disable next-line BlockStatement: a directory that readdir can't
+      // list (permissions / vanished mid-walk) is simply skipped; hard to force in a test.
     } catch {
       return;
     }
@@ -90,17 +111,24 @@ export function startWatch(onSettled: () => void): void {
 }
 
 export function stopWatch(): void {
+  // Stryker disable next-line ConditionalExpression,CallExpression: `debounceTimer`
+  // is nulled on the next line regardless; clearing the OS timer just stops a
+  // now-harmless callback (settled is nulled below) from firing later.
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = null;
   for (const w of watchers.values()) w.close();
   watchers.clear();
   watchedRoot = null;
+  settled = null;
 }
 
 /** Re-point the watch at the current `S.rootLib` (called when the setting changes). */
 export function restartWatch(): void {
   if (!settled) return;
   const cb = settled;
+  // Stryker disable next-line CallExpression: syncWatchers() inside startWatch()
+  // already prunes watchers for the old root, and `cb` is unchanged, so the
+  // explicit stopWatch() is belt-and-braces.
   stopWatch();
   startWatch(cb);
 }
