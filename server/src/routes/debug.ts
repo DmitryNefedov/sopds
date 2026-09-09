@@ -9,25 +9,35 @@ import type { Request, Response, NextFunction } from 'express';
 
 const VERBOSE = process.env.SOPDS_LOG_REQUESTS !== '0';
 
-function isNavigation(req: Request): boolean {
+/** True for a request that looks like a browser navigating to a page (vs an
+ *  API call or a static asset), which is what the verbose logger cares about. */
+export function isNavigation(req: Request): boolean {
   if (req.path.startsWith('/api') || req.path.startsWith('/opds')) return false;
   if (req.get('sec-fetch-dest') === 'document') return true;
+  // Stryker disable next-line StringLiteral: the `|| ''` only avoids calling .includes on undefined; any non-HTML default behaves identically.
   const accept = req.get('accept') || '';
   if (accept.includes('text/html')) return true;
   // extensionless path that isn't an asset
   return !/\.[a-z0-9]+$/i.test(req.path);
 }
 
+/** Best-effort client IP: the first X-Forwarded-For hop, else the socket peer. */
+export function clientIp(req: Request): string {
+  const xff = req.headers['x-forwarded-for'];
+  return (
+    (typeof xff === 'string' ? xff : '').split(',')[0].trim() ||
+    req.socket.remoteAddress ||
+    '?'
+  );
+}
+
 export function requestLogger(req: Request, res: Response, next: NextFunction): void {
   if (!VERBOSE || !isNavigation(req)) return next();
 
   const started = Date.now();
-  const xff = req.headers['x-forwarded-for'];
-  const ip =
-    (typeof xff === 'string' ? xff : '').split(',')[0].trim() ||
-    req.socket.remoteAddress ||
-    '?';
+  const ip = clientIp(req);
 
+  // Stryker disable all: this listener only pretty-prints to the console.
   res.on('finish', () => {
     const lines = [];
     lines.push('');
@@ -42,6 +52,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
     lines.push('════════════════════════════════════════════════════════════');
     console.log(lines.join('\n'));
   });
+  // Stryker restore all
 
   next();
 }
@@ -62,20 +73,26 @@ debugRouter.get('/headers', (req, res) => {
 
 // The client posts back what its browser reports; log it prominently.
 debugRouter.post('/report', (req, res) => {
+  // Stryker disable all: prominent console logging, no behaviour to verify.
   console.log('');
   console.log('╔═══════ CLIENT SELF-REPORT ═════════════════════════════════');
   console.log(JSON.stringify(req.body, null, 2));
   console.log('║  request headers for the same client:');
   console.log(JSON.stringify(req.headers, null, 2));
   console.log('╚═══════════════════════════════════════════════════════════');
+  // Stryker restore all
   res.json({ ok: true });
 });
 
 // Human-friendly page: open http://<server>:<port>/debug on the device.
+// Stryker disable next-line StringLiteral: mounted at /debug, `''` and `'/'` match exactly the same requests.
 debugRouter.get('/', (req, res) => {
   res.type('html').send(DEBUG_PAGE);
 });
 
+// A static self-contained HTML page - no server logic depends on its contents,
+// so it is not a useful mutation target.
+// Stryker disable all
 const DEBUG_PAGE = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -180,3 +197,4 @@ const DEBUG_PAGE = `<!doctype html>
 })();
 </script>
 </body></html>`;
+// Stryker restore all

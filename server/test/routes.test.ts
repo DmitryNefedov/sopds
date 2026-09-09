@@ -24,6 +24,8 @@ const { initSchema } = await import('../src/db/schema.js');
 const settings = await import('../src/services/settings.js');
 const { runOnce } = await import('../src/services/scanner/engine.js');
 const { createApp } = await import('../src/app.js');
+const repo = await import('../src/services/catalog.js');
+const { default: config } = await import('../src/config/index.js');
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -92,6 +94,22 @@ after(async () => {
 });
 
 // ---- health ------------------------------------------------------------
+
+test('with SOPDS_LOG_REQUESTS=0 the verbose request logger stays silent', async () => {
+  const real = console.log;
+  let buf = '';
+  console.log = (...a: unknown[]) => {
+    buf += a.join(' ') + '\n';
+  };
+  try {
+    // a browser-style navigation - would trigger the verbose block if VERBOSE were on
+    await (await get('/', { headers: { accept: 'text/html' } })).text().catch(() => '');
+    await new Promise((r) => setTimeout(r, 30));
+  } finally {
+    console.log = real;
+  }
+  assert.doesNotMatch(buf, /UI request/);
+});
 
 test('/health reports the database is reachable', async () => {
   for (const p of ['/health', '/healthz']) {
@@ -327,6 +345,40 @@ test('GET /api/admin/settings exposes grouped definitions and current values', a
     ['General', 'Scanning', 'Display', 'Conversion'],
   );
   assert.equal(body.values.rootLib, lib);
+
+  // each group carries exactly its own settings, fully described
+  const flat: Record<string, any> = {};
+  for (const g of body.groups) for (const s of g.settings) flat[s.key] = { ...s, group: g.group };
+  assert.equal(flat.title.group, 'General');
+  assert.equal(flat.maxItems.group, 'Display');
+  assert.ok(!('scanCron' in flat && flat.scanCron.group !== 'Scanning'), 'no setting leaks between groups');
+
+  // help is the string when present, null when absent
+  assert.equal(flat.rootLib.help, 'Absolute path to the folder that holds your books');
+  assert.equal(flat.title.help, null);
+  // min/max are the numbers for a bounded int, null otherwise
+  assert.deepEqual([flat.maxItems.min, flat.maxItems.max], [1, 200]);
+  assert.deepEqual([flat.title.min, flat.title.max], [null, null]);
+  // the rest of the descriptor
+  assert.deepEqual(
+    { key: flat.maxItems.key, label: flat.maxItems.label, type: flat.maxItems.type },
+    { key: 'maxItems', label: 'Items per page', type: 'int' },
+  );
+  assert.equal(typeof flat.maxItems.default, 'number');
+  assert.ok(body.converter && Array.isArray(body.converter.formats));
+});
+
+test('an admin request still succeeds when a stray token header is sent but none is configured', async () => {
+  const res = await get('/api/admin/settings', { headers: { 'x-admin-token': 'irrelevant' } });
+  assert.equal(res.status, 200, 'with no SOPDS_ADMIN_TOKEN the guard is off entirely');
+});
+
+test('POST /api/admin/scan kicks off a scan and reports started/queued', async () => {
+  const { status, body } = await json('/api/admin/scan', { method: 'POST' });
+  assert.equal(status, 200);
+  assert.equal(typeof body.started, 'boolean');
+  assert.equal(typeof body.queued, 'boolean');
+  assert.ok(body.started || body.queued, 'the trigger either started a run or queued one');
 });
 
 test('PUT /api/admin/settings persists a change and reports it back', async () => {
@@ -362,6 +414,14 @@ test('GET /api/admin/check-path validates the collection directory', async () =>
     `/api/admin/check-path?path=${encodeURIComponent(path.join(lib, 'notes.txt'))}`,
   );
   assert.deepEqual(file.body, { ok: false, reason: 'not a directory' });
+
+  // a non-ENOENT stat error surfaces its own message, not "does not exist"
+  const notdir = await json(
+    `/api/admin/check-path?path=${encodeURIComponent(path.join(lib, 'notes.txt', 'nested'))}`,
+  );
+  assert.equal(notdir.body.ok, false);
+  assert.notEqual(notdir.body.reason, 'does not exist');
+  assert.match(notdir.body.reason, /ENOTDIR|not a directory/i);
 });
 
 test('GET /api/admin/scan reports scanner state, and /api/admin/info the runtime', async () => {
@@ -372,7 +432,12 @@ test('GET /api/admin/scan reports scanner state, and /api/admin/info the runtime
 
   const info = await json('/api/admin/info');
   assert.equal(info.body.node, process.version);
-  assert.ok(info.body.database);
+  assert.equal(typeof info.body.database, 'string');
+  assert.ok(info.body.database.length > 0);
+  // in-memory test DB has no connection URL, so the host:port/name form is used
+  assert.match(info.body.database, /\/|:/, 'a host:port/name or a url');
+  assert.equal(info.body.port, config.port);
+  assert.equal(info.body.convertCacheDir, config.convertCacheDir);
 });
 
 // ---- OPDS --------------------------------------------------------------
@@ -411,6 +476,128 @@ test('OPDS catalogs, authors, series and genres each render a feed', async () =>
   assert.ok((await opds(`/opds/author/${authorId}`)).includes('Alpha Story'));
   const serId = (await db.get<{ id: number }>('SELECT id FROM series LIMIT 1'))!.id;
   assert.ok((await opds(`/opds/serie/${serId}`)).includes('Beta Story'));
+});
+
+// The <id>, root <title> and rel="self" href are the feed's identity - a client
+// dedupes and refreshes on them, so pin the exact strings for every route.
+test('every OPDS feed carries its documented id, title and self link', async () => {
+  const rootTitle = settings.S.title;
+  const authorId = (await db.get<{ id: number }>('SELECT id FROM authors LIMIT 1'))!.id;
+  const serId = (await db.get<{ id: number }>('SELECT id FROM series LIMIT 1'))!.id;
+  const secId = (await repo.genreSections())[0].section_id;
+  const genreId = (await repo.genresInSection(secId))[0].id;
+  const shelfId = (await db.get<{ id: number }>("SELECT id FROM catalogs WHERE cat_name = 'shelf'"))!.id;
+  const rootCatId = (await db.get<{ id: number }>("SELECT id FROM catalogs WHERE path = '.'"))!.id;
+
+  const cases: [string, string, string, string][] = [
+    ['/opds/', 'sopds:root', rootTitle, '/opds/'],
+    ['/opds/search?q=alpha', 'sopds:search:alpha', 'Search: alpha', '/opds/search?q=alpha'],
+    ['/opds/catalogs', `sopds:catalogs:${rootCatId}`, 'By catalogs', `/opds/catalogs?cat=${rootCatId}`],
+    [`/opds/catalogs?cat=${shelfId}`, `sopds:catalogs:${shelfId}`, 'By catalogs', `/opds/catalogs?cat=${shelfId}`],
+    ['/opds/authors', 'sopds:authors', 'By authors', '/opds/authors'],
+    [`/opds/author/${authorId}`, `sopds:author:${authorId}`, 'Books by author', `/opds/author/${authorId}`],
+    ['/opds/series', 'sopds:series', 'By series', '/opds/series'],
+    [`/opds/serie/${serId}`, `sopds:serie:${serId}`, 'Books in series', `/opds/serie/${serId}`],
+    ['/opds/genres', 'sopds:genres', 'By genres', '/opds/genres'],
+    [`/opds/genres?section=${secId}`, `sopds:genres:${secId}`, 'Genre', `/opds/genres?section=${secId}`],
+    [`/opds/genre/${genreId}`, `sopds:genre:${genreId}`, 'Books in genre', `/opds/genre/${genreId}`],
+  ];
+  for (const [url, id, title, self] of cases) {
+    const xml = await opds(url);
+    assert.ok(xml.includes(`<id>${id}</id>`), `${url}: <id>${id}</id>`);
+    assert.ok(xml.includes(`<title>${title}</title>`), `${url}: <title>${title}</title>`);
+    assert.ok(
+      xml.includes(`<link rel="self" href="${self}" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>`),
+      `${url}: self link ${self}`,
+    );
+  }
+});
+
+test('the OPDS root is reachable with and without the trailing slash', async () => {
+  const slash = await opds('/opds/');
+  assert.ok(slash.includes('<id>sopds:root</id>'));
+  const bare = await get('/opds');
+  // express redirects /opds -> /opds/ or serves it directly; either way the root feed
+  assert.ok([200, 301].includes(bare.status));
+  const xml = bare.status === 200 ? await bare.text() : await (await get('/opds/')).text();
+  assert.ok(xml.includes('<id>sopds:root</id>'));
+});
+
+test('OPDS root entries carry the exact id, title and live-count content', async () => {
+  const xml = await opds('/opds/');
+  for (const [id, title] of [
+    ['nav:catalogs', 'By catalogs'],
+    ['nav:authors', 'By authors'],
+    ['nav:series', 'By series'],
+    ['nav:genres', 'By genres'],
+  ]) {
+    assert.ok(xml.includes(`<id>${id}</id>`), id);
+    assert.ok(xml.includes(`<title>${title}</title>`), title);
+  }
+  assert.match(xml, /<content type="text">Catalogs: \d+, books: 2<\/content>/);
+  assert.match(xml, /<content type="text">Authors: 1<\/content>/);
+});
+
+test('OPDS search trims surrounding whitespace from the query', async () => {
+  const xml = await opds('/opds/search?q=%20%20alpha%20story%20%20');
+  assert.ok(xml.includes('<id>sopds:search:alpha story</id>'), 'the id uses the trimmed query');
+  assert.ok(xml.includes('<title>Search: alpha story</title>'));
+  assert.ok(xml.includes('<title>Alpha Story</title>'), 'and it still finds the book');
+});
+
+test('OPDS /opds/catalogs?cat=0 renders the empty root-level feed', async () => {
+  const xml = await opds('/opds/catalogs?cat=0');
+  assert.ok(xml.includes('<id>sopds:catalogs:0</id>'));
+  assert.ok(
+    xml.includes('<link rel="self" href="/opds/catalogs" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>'),
+    'no ?cat= suffix on the self link when the id is 0',
+  );
+});
+
+test('OPDS author/series feeds honour a ?prefix= filter', async () => {
+  assert.ok((await opds('/opds/authors?prefix=Adams')).includes('Adams Douglas'));
+  const none = await opds('/opds/authors?prefix=Zz');
+  assert.ok(!none.includes('<entry>'), 'a non-matching prefix yields no entries');
+  assert.ok((await opds('/opds/series?prefix=Test')).includes('Test Series'));
+  assert.ok(!(await opds('/opds/series?prefix=Zz')).includes('<entry>'));
+});
+
+test('OPDS nav feeds link each child to its own sub-feed with a book count', async () => {
+  const authorId = (await db.get<{ id: number }>('SELECT id FROM authors LIMIT 1'))!.id;
+  const authors = await opds('/opds/authors');
+  assert.ok(authors.includes(`<id>author:${authorId}</id>`), 'author entry id');
+  assert.ok(authors.includes(`<link rel="subsection" href="/opds/author/${authorId}"`), 'author -> /opds/author/:id');
+  assert.match(authors, /<content type="text">2 books<\/content>/);
+
+  const serId = (await db.get<{ id: number }>('SELECT id FROM series LIMIT 1'))!.id;
+  const seriesFeed = await opds('/opds/series');
+  assert.ok(seriesFeed.includes(`<id>series:${serId}</id>`));
+  assert.ok(seriesFeed.includes(`href="/opds/serie/${serId}"`));
+  assert.match(seriesFeed, /<content type="text">2 books<\/content>/);
+
+  const secId = (await repo.genreSections())[0].section_id;
+  const genres = await opds('/opds/genres');
+  assert.ok(genres.includes(`<id>section:${secId}</id>`));
+  assert.ok(genres.includes(`href="/opds/genres?section=${secId}"`), 'section -> /opds/genres?section=');
+  assert.match(genres, /<content type="text">\d+ books<\/content>/, 'section entry carries its book count');
+  const genreId = (await repo.genresInSection(secId))[0].id;
+  const sectionFeed = await opds(`/opds/genres?section=${secId}`);
+  assert.ok(sectionFeed.includes(`<id>genre:${genreId}</id>`));
+  assert.ok(sectionFeed.includes(`href="/opds/genre/${genreId}"`));
+  assert.match(sectionFeed, /<content type="text">\d+ books<\/content>/);
+
+  const catId = (await db.get<{ id: number }>("SELECT id FROM catalogs WHERE cat_name = 'shelf'"))!.id;
+  const catFeed = await opds('/opds/catalogs');
+  assert.ok(catFeed.includes(`<id>cat:${catId}</id>`));
+  assert.ok(catFeed.includes(`href="/opds/catalogs?cat=${catId}"`));
+  assert.match(catFeed, /<content type="text">2 books<\/content>/, 'child catalog book count');
+});
+
+test('OPDS search with no query yields an empty feed, not an error', async () => {
+  const xml = await opds('/opds/search');
+  assert.ok(xml.includes('<id>sopds:search:</id>'));
+  assert.ok(xml.includes('<title>Search: </title>'));
+  assert.ok(!xml.includes('<entry>'), 'no entries for an empty query');
 });
 
 test('OPDS escapes XML metacharacters rather than emitting broken markup', async () => {
