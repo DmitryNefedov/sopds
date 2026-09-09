@@ -177,4 +177,32 @@ test('opening a file that is not a zip rejects', async () => {
   });
 });
 
+// The reader must release the archive's file descriptor after every call - a
+// leak here exhausts the process fd table on a large collection scan.
+const FD_DIR = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
+const openFdCount = (): number => fs.readdirSync(FD_DIR).length;
+
+test('every reader closes the archive file descriptor when it is done', async (t) => {
+  if (!fs.existsSync(FD_DIR)) return t.skip(`no ${FD_DIR} on this platform`);
+  const p = makeZip({ 'a.txt': BODY_A, 'b.txt': BODY_B });
+  const loc = (await zipLocations(p)).get('a.txt')!;
+
+  const runs: Array<() => Promise<unknown>> = [
+    async () => {
+      for await (const _e of zipEntries(p)) void _e;
+    },
+    () => readZipEntry(p, 'a.txt'),
+    () => zipLocations(p),
+    () => readZipEntryAt(p, loc),
+  ];
+
+  for (const run of runs) {
+    await run(); // warm up (module-level caches, lazy requires)
+    const before = openFdCount();
+    for (let i = 0; i < 30; i++) await run();
+    const after = openFdCount();
+    assert.ok(after - before <= 4, `fd count grew by ${after - before} over 30 calls`);
+  }
+});
+
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
