@@ -26,7 +26,7 @@ const MODULES = {
   'connectors-bf':   { mutate: 'src/connectors/bookfiles.ts', tests: 'test/bookfiles-unit.test.ts,test/head.test.ts' },
   db:          { mutate: 'src/db/index.ts,src/db/backend.ts', tests: 'test/db.test.ts,test/db-unit.test.ts' },
   settings:    { mutate: 'src/services/settings.ts',          tests: 'test/settings.test.ts,test/settings-unit.test.ts' },
-  catalog:     { mutate: 'src/services/catalog.ts',           tests: 'test/search.test.ts,test/browse.test.ts,test/head.test.ts' },
+  catalog:     { mutate: 'src/services/catalog.ts',           tests: 'test/search.test.ts,test/browse.test.ts,test/catalog-unit.test.ts,test/head.test.ts' },
   engine:      { mutate: 'src/services/scanner/engine.ts',    tests: 'test/engine.test.ts,test/scan-concurrency.test.ts,test/formats.test.ts' },
   scanner:     { mutate: 'src/services/scanner/index.ts,src/services/scanner/schedule.ts', tests: 'test/scan.test.ts,test/scan-concurrency.test.ts,test/schedule-unit.test.ts' },
   watch:       { mutate: 'src/services/scanner/watch.ts',     tests: 'test/watch.test.ts,test/watch-unit.test.ts' },

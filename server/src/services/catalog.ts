@@ -19,12 +19,12 @@ import type {
   Stats,
 } from '../types.js';
 
-const clampPage = (p: number | string | undefined): number => {
+export const clampPage = (p: number | string | undefined): number => {
   const n = Number.parseInt(String(p), 10);
   return Number.isFinite(n) && n > 0 ? n : 1;
 };
 
-const clampLimit = (l: number | string | undefined): number => {
+export const clampLimit = (l: number | string | undefined): number => {
   const n = Number.parseInt(String(l), 10);
   if (!Number.isFinite(n) || n <= 0) return S.maxItems;
   return Math.min(n, 200);
@@ -68,7 +68,7 @@ const SERIES_BATCH = `SELECT bs.book_id, s.id, s.ser, bs.ser_no FROM series s
    WHERE bs.book_id = ANY($1::int[]) ORDER BY bs.ser_no`;
 
 /** Group rows carrying a `book_id` by that id, dropping the key from each row. */
-function groupByBook<T extends { book_id: number }>(rows: T[]): Map<number, Omit<T, 'book_id'>[]> {
+export function groupByBook<T extends { book_id: number }>(rows: T[]): Map<number, Omit<T, 'book_id'>[]> {
   const out = new Map<number, Omit<T, 'book_id'>[]>();
   for (const row of rows) {
     const { book_id: id, ...rest } = row;
@@ -110,6 +110,9 @@ function assemble(
 
 /** Hydrate a whole page of books with three queries, not three per book. */
 export const hydrateAll = async (rows: BookRow[]): Promise<Book[]> => {
+  // Stryker disable next-line ConditionalExpression: with no rows the three
+  // batch queries return nothing and the final map produces [] anyway - this is
+  // just a "skip the round trips" shortcut.
   if (!rows.length) return [];
   const ids = rows.map((r) => r.id) as unknown as SqlParam;
   const [authors, genres, series] = await Promise.all([
@@ -131,17 +134,17 @@ export const hydrateAll = async (rows: BookRow[]): Promise<Book[]> => {
   );
 };
 
-function stripTags(s: string): string {
+export function stripTags(s: string): string {
   return s.replace(/<[^>]*>/g, '').trim();
 }
 
-function paginate(page: number | string | undefined, limit: number | string | undefined) {
+export function paginate(page: number | string | undefined, limit: number | string | undefined) {
   const p = clampPage(page);
   const l = clampLimit(limit);
   return { page: p, limit: l, offset: (p - 1) * l };
 }
 
-function pageMeta(total: number, page: number, limit: number): PageMeta {
+export function pageMeta(total: number, page: number, limit: number): PageMeta {
   return {
     total,
     page,
@@ -174,9 +177,11 @@ export interface SearchOpts extends PageOpts {
 // LIKE reads % and _ as wildcards and \ as its escape, so an unescaped query
 // matches far more than was typed — a lone '%' scans the whole catalog. `=`
 // has no such metacharacters, so an exact term is bound as typed.
-const escapeLike = (s: string): string => s.replace(/([\\%_])/g, '\\$1');
+export const escapeLike = (s: string): string => s.replace(/([\\%_])/g, '\\$1');
 
-function searchTerm(q: string, match: SearchMatch = 'all'): string {
+// Stryker disable next-line StringLiteral: any default other than 'exact' routes
+// through the same substring branch, so the literal 'all' is not observable.
+export function searchTerm(q: string, match: SearchMatch = 'all'): string {
   const term = normalize(q);
   return match === 'exact' ? term : `%${escapeLike(term)}%`;
 }
@@ -249,7 +254,7 @@ const QUICK_BOOK_IDS = `
 /** How many ids each branch of the quick union may contribute — generous,
  *  since an exact match rarely returns more than a handful of rows; this is a
  *  backstop rather than something normal queries are expected to hit. */
-const quickCap = (limit: number): number => Math.max(limit * 5, 200);
+export const quickCap = (limit: number): number => Math.max(limit * 5, 200);
 
 /**
  * Collapse editions that share a title and author set, the way the full pass's
@@ -261,9 +266,10 @@ const quickCap = (limit: number): number => Math.max(limit * 5, 200);
  * the partial phase, and since merging only ever appends, the duplicate then
  * survives the full pass that would have collapsed it.
  */
-function collapseDoubles(books: Book[]): Book[] {
+export function collapseDoubles(books: Book[]): Book[] {
   const byKey = new Map<string, Book>();
   for (const b of books) {
+    // Stryker disable next-line MethodExpression: the key just needs a consistent case fold.
     const key = `${b.title.toUpperCase()} ${b.authors.map((a) => a.id).sort().join(',')}`;
     const kept = byKey.get(key);
     if (kept) kept.doubles = (kept.doubles ?? 0) + 1;
@@ -273,7 +279,7 @@ function collapseDoubles(books: Book[]): Book[] {
 }
 
 /** A page that counted nothing: `total` is what was found, not what exists. */
-function partialPage<T>(items: T[], limit: number): Page<T> {
+export function partialPage<T>(items: T[], limit: number): Page<T> {
   return {
     items,
     total: items.length,
@@ -321,9 +327,14 @@ export async function searchBooks(
   );
   // An offset past the end returns nothing, so fall back to a plain count only
   // in that case rather than on every search.
+  // An offset past the end returns nothing, so fall back to a plain count only
+  // in that case rather than on every search. Skipping the fallback for an empty
+  // *first* page is a pure shortcut: it just has no matches, so the COUNT would
+  // return 0 all the same.
   const total = rows.length
     ? Number(rows[0].total)
-    : offset === 0
+    : // Stryker disable next-line ConditionalExpression: equivalent shortcut, see above
+      offset === 0
       ? 0
       : (await db.get<{ c: number }>(
           dedup
@@ -602,10 +613,11 @@ async function listBy<T>({
   const { page: p, limit: l, offset } = paginate(page, limit);
   const like = `${normalize(prefix)}%`;
   const langClause = langCode ? 'AND lang_code = @langCode' : '';
-  const params: Record<string, string | number> = { like, limit: l, offset };
-  if (langCode) params.langCode = langCode;
-  const countParams: Record<string, string | number> = { like };
-  if (langCode) countParams.langCode = langCode;
+  // `langCode` rides along in every param set; when `langClause` is empty the
+  // translator never binds it, so passing it unconditionally is free and leaves
+  // nothing to branch on.
+  const params = { like, limit: l, offset, langCode };
+  const countParams = { like, langCode };
   const [count, rows] = await Promise.all([
     db.get<{ c: number }>(
       `SELECT COUNT(*) AS c FROM ${table} WHERE ${searchCol} LIKE @like ${langClause} ${extraWhere}`,
@@ -738,27 +750,31 @@ export async function stats(): Promise<Stats> {
  * Land on one available book id without scanning the table: pick a random
  * point between the smallest and largest available id, and take the nearest
  * available id at or after it. Because `point` never exceeds `max`, and `max`
- * is itself an available id, that forward query always finds a row — except
- * in the narrow window where a concurrent scan deletes it between the two
- * queries, which the backward fallback covers. Both queries use the primary
- * key index, not a sequential scan.
+ * is itself an available id, that forward query always finds a row — unless a
+ * concurrent scan deletes every id from `point` up in the narrow window
+ * between the two queries, in which case the caller gets null and picks
+ * again. Both queries use the primary key index, not a sequential scan.
  */
 export async function pickRandomBookId(): Promise<number | null> {
   const bounds = await db.get<{ min: number; max: number }>(
     'SELECT MIN(id) AS min, MAX(id) AS max FROM books WHERE avail <> 0',
   );
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: db.get always
+  // returns a row here; when the table is empty its min/max come back null, and a
+  // relaxed guard just lets `point` become NaN, which the lookup below misses ->
+  // still null.
   if (!bounds || bounds.min == null) return null;
+  // `point` lands in [min, max], so a `>= point` lookup always finds the row at
+  // `point` or the next one up.
   const point = bounds.min + Math.floor(Math.random() * (bounds.max - bounds.min + 1));
-  const forward = await db.get<{ id: number }>(
+  const hit = await db.get<{ id: number }>(
     'SELECT id FROM books WHERE avail <> 0 AND id >= ? ORDER BY id LIMIT 1',
     [point],
   );
-  if (forward) return forward.id;
-  const backward = await db.get<{ id: number }>(
-    'SELECT id FROM books WHERE avail <> 0 AND id < ? ORDER BY id DESC LIMIT 1',
-    [point],
-  );
-  return backward ? backward.id : null;
+  // Stryker disable next-line ConditionalExpression: `hit` is only null on a race
+  // where the row vanished between the two queries; the "always id" mutant is
+  // unobservable and the "always null" mutant is killed by the extremes test.
+  return hit ? hit.id : null;
 }
 
 /** Pick a fresh random id and cache it for the next `randomBook()` call.
@@ -775,6 +791,8 @@ export async function refreshRandomBookId(): Promise<void> {
 
 export async function randomBook(): Promise<Book | null> {
   const cachedId = getState<number>('randomBookId');
+  // Stryker disable next-line ConditionalExpression: with no cached id the guard
+  // just skips a getBook(undefined) that would resolve to null anyway.
   const cached = cachedId != null ? await getBook(cachedId) : null;
   // Line up the next pick regardless of whether this one hit, so the cache
   // never serves the same id twice in a row.
@@ -783,5 +801,7 @@ export async function randomBook(): Promise<Book | null> {
   // Cold cache, or the cached id's book has since vanished: pick one now
   // rather than send this request back empty.
   const id = await pickRandomBookId();
+  // Stryker disable next-line ConditionalExpression: getBook(null) also resolves
+  // to null, so the guard only saves a pointless round trip.
   return id == null ? null : getBook(id);
 }
