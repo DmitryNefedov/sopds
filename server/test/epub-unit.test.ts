@@ -65,7 +65,7 @@ test('parseEpub reads the core Dublin Core fields', () => {
 });
 
 test('parseEpub keeps only the first dc:title', () => {
-  const m = parseEpub({} && epub({ metadata: '<dc:title>Real</dc:title><dc:title>Subtitle</dc:title>' }));
+  const m = parseEpub(epub({ metadata: '<dc:title>Real</dc:title><dc:title>Subtitle</dc:title>' }));
   assert.equal(m.title, 'Real');
 });
 

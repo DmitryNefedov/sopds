@@ -22,7 +22,7 @@ export default {
     // Stryker's `-r` coverage hook, so per-file mutant coverage is recorded.
     nodeArgs: ['--import', 'tsx', '--test', '--test-isolation=none', '--test-reporter=tap'],
   },
-  coverageAnalysis: 'perTest',
+  coverageAnalysis: process.env.STRYKER_COVERAGE ?? 'perTest',
   checkers: [],
   // TypeScript 7's slim JS API lacks parseConfigFileTextToJson, which Stryker's
   // tsconfig preprocessor calls. Point it at a file that isn't in the sandbox so

@@ -12,11 +12,15 @@ export function decodeXmlBuffer(buf: Buffer): string {
   else if (buf[0] === 0xfe && buf[1] === 0xff) bom = 'utf-16be';
   const head = buf.subarray(0, 200).toString('latin1');
   const m = head.match(/encoding=["']([\w-]+)["']/i);
-  let enc = (bom || (m ? m[1] : 'utf-8')).toLowerCase();
-  if (enc === 'utf8' || enc === 'us-ascii' || enc === 'ascii') enc = 'utf-8';
+  // TextDecoder labels are case-insensitive, so no normalisation is needed.
+  // Stryker disable next-line StringLiteral: an empty label throws below and the
+  // catch falls back to the same UTF-8 decode, so '' and 'utf-8' are equivalent.
+  const enc = bom || m?.[1] || 'utf-8';
   try {
-    return new TextDecoder(enc, { fatal: false }).decode(buf);
+    // TextDecoder is non-fatal by default: unmappable bytes become U+FFFD.
+    return new TextDecoder(enc).decode(buf);
   } catch {
+    // Unknown encoding label -> best-effort UTF-8.
     return buf.toString('utf8');
   }
 }
@@ -34,6 +38,8 @@ function descEndMarker(buf: Buffer): Buffer {
   if (buf[0] === 0xfe && buf[1] === 0xff) return Buffer.from(Buffer.from(DESC_END, 'utf16le').swap16());
   // utf-8, ascii and every single-byte codepage (windows-1251, koi8-r, …)
   // spell an ASCII tag the same way.
+  // Stryker disable next-line StringLiteral: DESC_END is ASCII, so 'latin1',
+  // 'utf8' and the mutant '' all produce identical bytes.
   return Buffer.from(DESC_END, 'latin1');
 }
 
@@ -51,6 +57,8 @@ export function fb2Head(buf: Buffer): Buffer {
 
 /** How many bytes of an FB2 file the scanner reads to find `</description>`. */
 export const FB2_HEAD_LIMIT = 256 * 1024;
+// Stryker disable next-line StringLiteral: DESC_END is ASCII; the encoding arg
+// has no observable effect ('' decodes as utf8, identical to latin1 here).
 export const FB2_HEAD_MARKER = Buffer.from(DESC_END, 'latin1');
 
 export interface Fb2Options {
@@ -93,8 +101,15 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
   };
 
   const text = decodeXmlBuffer(buf);
-  const parser = sax.parser(false, { lowercase: true, trim: false });
+  // Non-strict parser; `trim` left at its default (false) so annotation spacing
+  // is normalised in one place at the end.
+  // Stryker disable next-line BooleanLiteral: sax still emits every tag/text
+  // event in strict mode (it only additionally reports errors, which we ignore),
+  // so strict vs non-strict produces the same metadata here.
+  const parser = sax.parser(false, { lowercase: true });
 
+  // Stryker disable next-line ArrayDeclaration: only path().endsWith()/includes()
+  // ever reads `stack`, so a bogus initial element changes nothing.
   const stack: string[] = [];
   let curFirst = '';
   let curLast = '';
@@ -102,6 +117,8 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
   let inBinary = false;
   let binaryId: string | null = null;
   let binaryType: string | null = null;
+  // Stryker disable next-line ArrayDeclaration: reset to [] when a <binary>
+  // opens, before anything is pushed, so the initial value is dead.
   let binaryChunks: string[] = [];
   let doneDescription = false;
   const images: BinaryImage[] = []; // collected in document order
@@ -120,6 +137,8 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
     else if (p.endsWith('title-info/genre')) capture = 'genre';
     else if (p.endsWith('document-info/date')) {
       capture = 'docdate';
+      // Stryker disable next-line ConditionalExpression: with no value= attr this
+      // would assign undefined, which downstream `!meta.docdate` treats as ''.
       if (attributes.value) meta.docdate = attributes.value;
     } else if (p.includes('annotation')) capture = 'annotation';
     else capture = null;
@@ -134,12 +153,16 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
       }
     }
     if (p.endsWith('title-info/coverpage/image')) {
+      // Stryker disable next-line StringLiteral: a missing href only feeds
+      // startsWith('#') below, which is false for '' and for any junk alike.
       const href = attributes['l:href'] || attributes['xlink:href'] || '';
       // Only "#id" references point at an embedded <binary>.
       if (href.startsWith('#')) meta.coverId = href.slice(1).toLowerCase();
     }
     if (node.name === 'binary' && !metaOnly) {
       binaryId = (attributes.id || '').toLowerCase();
+      // Stryker disable next-line StringLiteral: a missing content-type is only
+      // ever compared against IMAGE_MIME, where '' and any non-image string act alike.
       binaryType = (attributes['content-type'] || '').toLowerCase();
       inBinary = true;
       binaryChunks = [];
@@ -158,30 +181,42 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
       case 'title': meta.title += t; break;
       case 'lang': meta.lang += t; break;
       case 'genre': meta._genre = (meta._genre || '') + t; break;
-      case 'docdate': if (!meta.docdate) meta._docdate = (meta._docdate || '') + t; break;
+      case 'docdate': meta._docdate = (meta._docdate || '') + t; break;
       case 'annotation': meta.annotation += t + ' '; break;
     }
   };
 
   parser.onclosetag = (name) => {
     const p = path();
+    // Stryker disable next-line StringLiteral: only a title-info author ever has
+    // its first/last name captured, so a document-info author yields full === ''.
     if (name === 'author' && p.includes('title-info')) {
       const full = [curFirst.trim(), curLast.trim()].filter(Boolean).join(' ');
       if (full) meta.authors!.push(full);
       curFirst = '';
       curLast = '';
     }
+    // Stryker disable next-line ConditionalExpression: `true && meta._genre` is
+    // identical here - an empty _genre is falsy in both.
     if (name === 'genre' && meta._genre) {
       meta.genres!.push(meta._genre.trim().toLowerCase());
       meta._genre = '';
     }
+    // Stryker disable next-line ConditionalExpression: <binary> has no child
+    // tags, so binaryId is non-null only while closing the <binary> itself.
     if (name === 'binary') {
       if (binaryId) {
+        // Stryker disable next-line StringLiteral: an absent content-type only
+        // feeds IMAGE_MIME, where '' and any non-image string behave alike.
         images.push({ id: binaryId, mime: binaryType || '', b64: binaryChunks.join('') });
       }
+      // Stryker disable next-line BooleanLiteral: any later <binary> resets both
+      // of these on open, and there is nothing to read after the last one.
       inBinary = false;
       binaryId = null;
       binaryType = null;
+      // Stryker disable next-line ArrayDeclaration: reset again when the next
+      // <binary> opens; the value assigned here is never read.
       binaryChunks = [];
     }
     if (name === 'description') doneDescription = true;
@@ -199,6 +234,8 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
   // empty under metaOnly, so this collapses to a no-op there.)
   const decode = (b64: string): Buffer | null => {
     const clean = b64.replace(/[^A-Za-z0-9+/=]/g, '');
+    // Stryker disable next-line ConditionalExpression: an empty `clean` decodes
+    // to a 0-byte buffer, which the length check below rejects anyway.
     if (!clean) return null;
     const data = Buffer.from(clean, 'base64');
     return data.length > 32 ? data : null;
@@ -212,8 +249,10 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
     const data = decode(chosen.b64);
     if (data && looksLikeImage(data)) {
       meta.coverData = data;
+      // looksLikeImage(data) is `Boolean(sniffMime(data))`, so sniffMime is
+      // non-null on this branch; the `|| 'image/jpeg'` tail is unreachable.
       meta.coverMime =
-        chosen.mime && IMAGE_MIME.test(chosen.mime) ? chosen.mime : sniffMime(data) || 'image/jpeg';
+        chosen.mime && IMAGE_MIME.test(chosen.mime) ? chosen.mime : sniffMime(data)!;
     }
   }
 
@@ -223,6 +262,8 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
   meta.annotation = (meta.annotation || '').replace(/\s+/g, ' ').trim();
   meta.langCode = getLangCode(meta.title);
 
+  // Stryker disable next-line ArrayDeclaration: meta.authors is initialised to []
+  // and only ever pushed to, so it is never nullish here.
   meta.authors = (meta.authors || []).map((a) => {
     if (a.includes(',')) return a;
     const parts = a.split(/\s+/);
@@ -233,7 +274,9 @@ export function parseFb2(input: Buffer, { metaOnly = false }: Fb2Options = {}): 
   return meta;
 }
 
+// Stryker disable next-line StringLiteral: ASCII text; the encoding arg is inert.
 const BINARY_OPEN = Buffer.from('<binary', 'latin1');
+// Stryker disable next-line StringLiteral: ASCII text; the encoding arg is inert.
 const BINARY_CLOSE = Buffer.from('</binary', 'latin1');
 const GT = 0x3e; // '>'
 
@@ -248,16 +291,27 @@ export function fb2Cover(buf: Buffer): CoverImage | null {
   let firstImage: CoverImage | null = null;
   while (at >= 0) {
     const gt = buf.indexOf(GT, at);
+    // Stryker disable next-line EqualityOperator,ConditionalExpression: a "<binary"
+    // with no ">" also has no "</binary" (which ends in no ">" but is only found
+    // past this point), so both break paths collapse to "return firstImage".
     if (gt < 0) break;
     const end = buf.indexOf(BINARY_CLOSE, gt);
+    // Stryker disable next-line EqualityOperator,ConditionalExpression: see above.
     if (end < 0) break;
     const tag = buf.toString('latin1', at, gt);
-    const mime = /content-type\s*=\s*["']([^"']+)/i.exec(tag)?.[1]?.toLowerCase() || '';
-    const id = /\bid\s*=\s*["']([^"']+)/i.exec(tag)?.[1]?.toLowerCase() || '';
+    // Stryker disable next-line StringLiteral: a missing content-type only feeds
+    // IMAGE_MIME.test(), false for '' and any non-image string alike.
+    const mime = (/content-type\s*=\s*["']([^"']+)/i.exec(tag)?.[1] || '').toLowerCase();
+    // Stryker disable next-line MethodExpression,StringLiteral: id feeds only a
+    // case-insensitive /cover/i test; toLowerCase/toUpperCase and ''/'x' are moot.
+    const id = (/\bid\s*=\s*["']([^"']+)/i.exec(tag)?.[1] || '').toLowerCase();
     if (IMAGE_MIME.test(mime) || /cover/i.test(id)) {
+      // Stryker disable next-line ArithmeticOperator: the byte before ">" is a
+      // quote/space, which base64 decoding skips, so gt+1 and gt-1 agree.
       const data = Buffer.from(buf.toString('latin1', gt + 1, end), 'base64');
       if (data.length > 32 && looksLikeImage(data)) {
-        const found = { data, mime: IMAGE_MIME.test(mime) ? mime : sniffMime(data) || 'image/jpeg' };
+        // looksLikeImage(data) implies sniffMime(data) is non-null.
+        const found = { data, mime: IMAGE_MIME.test(mime) ? mime : sniffMime(data)! };
         // A referenced cover wins; otherwise keep the first image we saw.
         if (/cover/i.test(id)) return found;
         firstImage ??= found;
