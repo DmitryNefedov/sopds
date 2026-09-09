@@ -7,11 +7,15 @@ import { cronMatches } from '../../utils/cron.js';
 let timer: NodeJS.Timeout | null = null;
 let lastTickMinute: string | null = null;
 
-function tick(onDue: () => void): void {
-  const now = new Date();
-  const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
-  if (minuteKey === lastTickMinute) return; // guard against the 30s interval double-firing
-  lastTickMinute = minuteKey;
+/** A stable key for the minute `d` falls in (distinct minutes never collide). */
+export function minuteKey(d: Date): string {
+  return [d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()].join(':');
+}
+
+export function tick(onDue: () => void, now: Date = new Date()): void {
+  const key = minuteKey(now);
+  if (key === lastTickMinute) return; // guard against the 30s interval double-firing
+  lastTickMinute = key;
   if (!S.scanEnabled) return;
   if (cronMatches(S.scanCron, now)) onDue();
 }
@@ -23,6 +27,8 @@ export function startSchedule(onDue: () => void): void {
 }
 
 export function stopSchedule(): void {
+  // Stryker disable next-line ConditionalExpression: `timer` is nulled next line
+  // regardless; clearInterval(null) is a harmless no-op.
   if (timer) clearInterval(timer);
   timer = null;
   lastTickMinute = null;

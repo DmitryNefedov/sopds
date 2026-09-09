@@ -28,7 +28,7 @@ const MODULES = {
   settings:    { mutate: 'src/services/settings.ts',          tests: 'test/settings.test.ts,test/settings-unit.test.ts' },
   catalog:     { mutate: 'src/services/catalog.ts',           tests: 'test/search.test.ts,test/browse.test.ts,test/head.test.ts' },
   engine:      { mutate: 'src/services/scanner/engine.ts',    tests: 'test/engine.test.ts,test/scan-concurrency.test.ts,test/formats.test.ts' },
-  scanner:     { mutate: 'src/services/scanner/index.ts,src/services/scanner/schedule.ts', tests: 'test/scan.test.ts' },
+  scanner:     { mutate: 'src/services/scanner/index.ts,src/services/scanner/schedule.ts', tests: 'test/scan.test.ts,test/scan-concurrency.test.ts,test/schedule-unit.test.ts' },
   watch:       { mutate: 'src/services/scanner/watch.ts',     tests: 'test/watch.test.ts,test/watch-unit.test.ts' },
   routes:      { mutate: 'src/routes/*.ts,src/app.ts',        tests: 'test/routes.test.ts,test/admin-auth.test.ts,test/browse.test.ts,test/search.test.ts' },
 };
