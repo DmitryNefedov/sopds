@@ -36,7 +36,7 @@ const MODULES = {
   engine:      { mutate: 'src/services/scanner/engine.ts',    tests: 'test/engine.test.ts,test/engine-unit.test.ts,test/engine-walk.test.ts,test/scan.test.ts,test/scan-concurrency.test.ts' },
   scanner:     { mutate: 'src/services/scanner/index.ts,src/services/scanner/schedule.ts', tests: 'test/scan.test.ts,test/scan-concurrency.test.ts,test/schedule-unit.test.ts' },
   watch:       { mutate: 'src/services/scanner/watch.ts',     tests: 'test/watch.test.ts,test/watch-unit.test.ts' },
-  routes:      { mutate: 'src/routes/*.ts,src/app.ts',        tests: 'test/routes.test.ts,test/admin-auth.test.ts,test/opds-unit.test.ts,test/browse.test.ts,test/search.test.ts' },
+  routes:      { mutate: 'src/routes/*.ts,src/app.ts',        tests: 'test/routes.test.ts,test/admin-auth.test.ts,test/opds-unit.test.ts,test/admin-unit.test.ts,test/app-unit.test.ts,test/debug-unit.test.ts' },
   'routes-opds':  { mutate: 'src/routes/opds.ts',   tests: 'test/opds-unit.test.ts,test/routes.test.ts' },
   'routes-api':   { mutate: 'src/routes/api.ts',    tests: 'test/routes.test.ts' },
   'routes-admin': { mutate: 'src/routes/admin.ts',  tests: 'test/routes.test.ts,test/admin-auth.test.ts,test/admin-unit.test.ts' },

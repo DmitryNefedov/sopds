@@ -194,6 +194,22 @@ test('an unknown match value falls back to the full search', async () => {
   assert.equal(res.body.results.total, 2);
 });
 
+test('GET /api/search trims the query before echoing and running it', async () => {
+  const res = await json('/api/search?q=%20%20alpha%20story%20%20&type=books');
+  assert.equal(res.body.query, 'alpha story', 'the echoed query is trimmed');
+  assert.deepEqual(res.body.results.items.map((b: any) => b.title), ['Alpha Story']);
+});
+
+test('GET /api/search?match=exact is honoured for the combined overview too', async () => {
+  // "story" is a substring of both titles but the exact-match title of neither
+  const exact = await json('/api/search?q=story&match=exact');
+  assert.equal(exact.body.type, 'all');
+  assert.equal(exact.body.results.books.total, 0, 'exact overview finds nothing');
+
+  const all = await json('/api/search?q=story');
+  assert.equal(all.body.results.books.total, 2, 'the substring overview finds both');
+});
+
 test('a query of LIKE wildcards matches nothing rather than everything', async () => {
   assert.equal((await json('/api/search?q=%25&type=books')).body.results.total, 0);
   assert.equal((await json('/api/search?q=_&type=books')).body.results.total, 0);
@@ -208,17 +224,70 @@ test('GET /api/books lists the scanned collection', async () => {
   assert.equal(body.items[0].authors[0].full_name, 'Adams Douglas');
 });
 
+test('GET /api/books paginates via ?page and ?limit', async () => {
+  const p1 = await json('/api/books?limit=1');
+  assert.equal(p1.body.total, 2, 'total counts the whole collection');
+  assert.deepEqual(p1.body.items.map((b: any) => b.title), ['Alpha Story'], 'limit=1 -> one item');
+
+  const p2 = await json('/api/books?page=2&limit=1');
+  assert.deepEqual(p2.body.items.map((b: any) => b.title), ['Beta Story'], 'page 2 is the next slice');
+});
+
+test('GET /api/books filters on ?lang', async () => {
+  const langCode = (await db.get<{ lang_code: number }>(
+    "SELECT lang_code FROM books WHERE title = 'Alpha Story'",
+  ))!.lang_code;
+  assert.ok(langCode > 0, 'the fixture books have a real language code');
+  assert.equal((await json(`/api/books?lang=${langCode}`)).body.total, 2, 'matching language -> both books');
+  assert.equal((await json(`/api/books?lang=${langCode + 7}`)).body.total, 0, 'other language -> none');
+});
+
 test('GET /api/books/:id offers every download format, marking the native one', async () => {
   const { body } = await json(`/api/books/${bookId}`);
   assert.equal(body.title, 'Alpha Story');
   assert.equal(body.annotation, 'About Alpha Story.', 'markup is stripped');
-  const formats = body.download_formats.map((f: any) => f.format).sort();
-  assert.deepEqual(formats, ['epub', 'fb2', 'mobi']);
-  assert.ok(body.download_formats.find((f: any) => f.format === 'fb2').native);
+  const byFmt: Record<string, any> = {};
+  for (const f of body.download_formats) byFmt[f.format] = f;
+  assert.deepEqual(Object.keys(byFmt).sort(), ['epub', 'fb2', 'mobi']);
+  // native marks fb2 only; the rest are not native
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(byFmt).map(([k, v]) => [k, v.native])),
+    { fb2: true, epub: false, mobi: false },
+  );
+  // an fb2 source is convertible to every target
+  assert.ok(byFmt.epub.convertible && byFmt.mobi.convertible && byFmt.fb2.convertible);
+  // each row has its own download URL
+  assert.equal(byFmt.epub.url, `/api/books/${bookId}/download?format=epub`);
+  assert.equal(byFmt.fb2.url, `/api/books/${bookId}/download?format=fb2`);
+});
+
+test('GET /api/books/:id: a non-convertible source marks no target as convertible', async () => {
+  const id = (await db.get<{ id: number }>(
+    `INSERT INTO books (filename, path, format, title, search_title, avail)
+     VALUES ('x.djvu', 'shelf', 'djvu', 'Scan', 'SCAN', 2) RETURNING id`,
+  ))!.id;
+  try {
+    const { body } = await json(`/api/books/${id}`);
+    const byFmt: Record<string, any> = {};
+    for (const f of body.download_formats) byFmt[f.format] = f;
+    // djvu is not one of the offered formats, so no row is native
+    assert.ok(!body.download_formats.some((f: any) => f.native), 'nothing is native');
+    assert.equal(byFmt.epub.convertible, false, 'djvu cannot be converted to epub');
+    assert.equal(byFmt.fb2.convertible, false);
+    assert.equal(byFmt.mobi.convertible, false);
+  } finally {
+    await db.run('DELETE FROM books WHERE id = ?', [id]);
+  }
 });
 
 test('GET /api/books/:id is a 404 for an unknown id', async () => {
   const { status, body } = await json('/api/books/999999');
+  assert.equal(status, 404);
+  assert.equal(body.error, 'not found');
+});
+
+test('GET /api/books/:id/download is a 404 (not found) for an unknown id', async () => {
+  const { status, body } = await json('/api/books/999999/download');
   assert.equal(status, 404);
   assert.equal(body.error, 'not found');
 });
@@ -241,11 +310,22 @@ test('a download converts to the requested format', async () => {
   assert.ok(body.includes('mimetype'));
 });
 
-test('a download can be wrapped in a zip', async () => {
+test('a download can be wrapped in a zip, named after the book inside and out', async () => {
   const res = await get(`/api/books/${bookId}/download?zip=1`);
   assert.equal(res.headers.get('content-type'), 'application/zip');
   assert.match(res.headers.get('content-disposition')!, /filename="alpha_story\.fb2\.zip"/);
-  assert.equal(Buffer.from(await res.arrayBuffer()).toString('latin1', 0, 2), 'PK');
+  const zipBuf = Buffer.from(await res.arrayBuffer());
+  assert.equal(zipBuf.toString('latin1', 0, 2), 'PK');
+  const AdmZip = (await import('adm-zip')).default;
+  const names = new AdmZip(zipBuf).getEntries().map((e) => e.entryName);
+  assert.deepEqual(names, ['alpha_story.fb2'], 'the single entry is named after the book + format');
+});
+
+test('a zip download of a converted format names the entry with the target extension', async () => {
+  const res = await get(`/api/books/${bookId}/download?format=epub&zip=1`);
+  const AdmZip = (await import('adm-zip')).default;
+  const names = new AdmZip(Buffer.from(await res.arrayBuffer())).getEntries().map((e) => e.entryName);
+  assert.deepEqual(names, ['alpha_story.epub']);
 });
 
 test('an unsupported target format is refused, not silently served', async () => {
@@ -291,11 +371,31 @@ test('GET /api/authors lists authors with their book counts', async () => {
   assert.equal(books.body.total, 2);
 });
 
+test('GET /api/authors honours ?prefix and ?lang', async () => {
+  assert.equal((await json('/api/authors?prefix=Adams')).body.items.length, 1);
+  assert.equal((await json('/api/authors?prefix=Zz')).body.items.length, 0, 'a non-matching prefix -> none');
+  const langCode = (await db.get<{ lang_code: number }>(
+    "SELECT lang_code FROM books WHERE title = 'Alpha Story'",
+  ))!.lang_code;
+  assert.equal((await json(`/api/authors?lang=${langCode}`)).body.items.length, 1);
+  assert.equal((await json(`/api/authors?lang=${langCode + 7}`)).body.items.length, 0);
+});
+
 test('GET /api/series lists series and their books', async () => {
   const { body } = await json('/api/series');
   assert.equal(body.items[0].ser, 'Test Series');
   const books = await json(`/api/series/${body.items[0].id}/books`);
   assert.deepEqual(books.body.items.map((b: any) => b.title), ['Alpha Story', 'Beta Story']);
+});
+
+test('GET /api/series honours ?prefix and ?lang', async () => {
+  assert.equal((await json('/api/series?prefix=Test')).body.items.length, 1);
+  assert.equal((await json('/api/series?prefix=Zz')).body.items.length, 0);
+  const langCode = (await db.get<{ lang_code: number }>(
+    "SELECT lang_code FROM books WHERE title = 'Alpha Story'",
+  ))!.lang_code;
+  assert.equal((await json(`/api/series?lang=${langCode}`)).body.items.length, 1);
+  assert.equal((await json(`/api/series?lang=${langCode + 7}`)).body.items.length, 0);
 });
 
 test('GET /api/genres walks sections then genres then books', async () => {
