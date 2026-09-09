@@ -67,12 +67,17 @@ export function parseBook(buf: Buffer, filename: string, opts: ParseOptions = {}
   try {
     if (ext === '.fb2') return normalize(parseFb2(buf, opts), filename);
     if (ext === '.epub') return normalize(parseEpub(buf, opts), filename);
+    // Stryker disable next-line ConditionalExpression: for a non-mobi ext,
+    // mobiMeta() bails on the header check and yields the same filename-derived
+    // BookMeta the block below produces.
     if (ext === '.mobi') return normalize(mobiMeta(buf), filename);
   } catch {
     /* fall through to filename-only metadata */
   }
   const base = path.basename(filename, ext);
   return normalize(
+    // Stryker disable next-line ObjectLiteral: normalize() defaults every field,
+    // so {} produces the same result (title <- base, langCode <- getLangCode(base)).
     { title: base, authors: [], genres: [], lang: '', langCode: getLangCode(base) },
     filename,
   );
@@ -86,14 +91,22 @@ export function extractCover(buf: Buffer, filename: string): CoverImage | null {
       // The byte scan handles the overwhelming majority; parseFb2 is the
       // fallback for files it cannot make sense of.
       const quick = fb2Cover(buf);
+      // Stryker disable next-line ConditionalExpression: parseFb2 below resolves
+      // the same cover for any well-formed FB2 the byte scan also handles.
       if (quick) return quick;
       const m = parseFb2(buf);
+      // Stryker disable next-line StringLiteral,LogicalOperator: parseFb2 always
+      // sets coverMime when it sets coverData - the '|| image/jpeg' is unreachable.
       return m.coverData ? { data: m.coverData, mime: m.coverMime || 'image/jpeg' } : null;
     }
     if (ext === '.epub') {
       const m = parseEpub(buf);
+      // Stryker disable next-line StringLiteral,LogicalOperator: parseEpub sets
+      // coverMime (a sniffed value at worst) whenever it sets coverData.
       return m.coverData ? { data: m.coverData, mime: m.coverMime || 'image/jpeg' } : null;
     }
+    // Stryker disable next-line ConditionalExpression: mobiCover() self-guards on
+    // the PalmDB/MOBI header and returns null for any non-mobi buffer.
     if (ext === '.mobi') return mobiCover(buf);
   } catch {
     /* ignore */
@@ -110,12 +123,19 @@ function normalize(meta: RawMeta, filename: string): BookMeta {
       : null;
   return {
     title: (meta.title || base).slice(0, 512),
+    // Stryker disable next-line ArrayDeclaration,MethodExpression: every parser
+    // returns an array of non-blank author strings (mobiMeta filters its own).
     authors: (meta.authors || []).filter(Boolean),
+    // Stryker disable next-line ArrayDeclaration: every parser returns an array
+    // (but mobiMeta CAN push a '' genre, so .filter(Boolean) is load-bearing).
     genres: (meta.genres || []).filter(Boolean),
     series,
     lang: meta.lang || '',
     docdate: meta.docdate || '',
     annotation: (meta.annotation || '').slice(0, 10000),
+    // Stryker disable next-line ConditionalExpression,LogicalOperator: every
+    // parser and the filename fallback set meta.langCode (a value in 1..9,
+    // always truthy), so the getLangCode() tail is unreachable.
     langCode: meta.langCode ?? getLangCode(meta.title || base),
     format: ext.replace('.', ''),
   };

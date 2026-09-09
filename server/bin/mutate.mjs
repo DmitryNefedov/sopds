@@ -19,7 +19,7 @@ const MODULES = {
   'formats-fb2':   { mutate: 'src/formats/fb2.ts',            tests: 'test/fb2-unit.test.ts,test/cover.test.ts,test/formats.test.ts' },
   'formats-epub':  { mutate: 'src/formats/epub.ts',           tests: 'test/epub-unit.test.ts,test/cover.test.ts,test/formats.test.ts' },
   'formats-mobi':  { mutate: 'src/formats/mobi.ts',           tests: 'test/mobi-unit.test.ts,test/cover.test.ts,test/formats.test.ts' },
-  'formats-index': { mutate: 'src/formats/index.ts',          tests: 'test/formats.test.ts,test/cover.test.ts,test/head.test.ts,test/fb2-unit.test.ts' },
+  'formats-index': { mutate: 'src/formats/index.ts',          tests: 'test/formats-index.test.ts,test/formats.test.ts,test/cover.test.ts,test/head.test.ts' },
   convert:     { mutate: 'src/services/convert/*.ts',         tests: 'test/convert.test.ts' },
   connectors:  { mutate: 'src/connectors/*.ts',              tests: 'test/head.test.ts,test/cover-speed.test.ts,test/engine.test.ts' },
   db:          { mutate: 'src/db/index.ts,src/db/backend.ts', tests: 'test/db.test.ts' },
