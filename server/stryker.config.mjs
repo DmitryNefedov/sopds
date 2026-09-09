@@ -14,7 +14,7 @@ const testFiles = (process.env.STRYKER_TEST_FILES ?? 'test/*.test.ts').split(','
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
   packageManager: 'npm',
-  reporters: ['html', 'clear-text', 'progress'],
+  reporters: ['html', 'json', 'clear-text', 'progress'],
   testRunner: 'tap',
   tap: {
     testFiles,
