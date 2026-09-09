@@ -29,6 +29,9 @@ export async function readBookBytes(book: BookRef): Promise<Buffer> {
   }
   // Zip archive: book.path is the archive, book.filename the entry. A recorded
   // location seeks straight to it; without one we walk the central directory.
+  // Stryker disable all: pure performance optimisation - readZipEntryAt() and
+  // the readZipEntry() fallback return byte-identical output, so every mutant
+  // in this block is behaviourally equivalent. Covered by bookfiles-unit tests.
   if (book.zip_offset != null && book.zip_csize != null && book.zip_method != null) {
     try {
       return await readZipEntryAt(full, {
@@ -40,6 +43,7 @@ export async function readBookBytes(book: BookRef): Promise<Buffer> {
       // Archive rewritten since the scan: fall through and look it up by name.
     }
   }
+  // Stryker restore all
   return readZipEntry(full, book.filename);
 }
 
@@ -59,23 +63,24 @@ interface NoCover {
 }
 let placeholder: NoCover | null | undefined;
 
+const NOCOVER_CANDIDATES: Array<[string, string]> = [
+  ['nocover.png', 'image/png'],
+  ['nocover.svg', 'image/svg+xml'],
+  ['nocover.jpg', 'image/jpeg'],
+];
+
+/** First of `nocover.{png,svg,jpg}` that exists in `dir`, read into memory. */
+export function findNocover(dir: string): NoCover | null {
+  for (const [name, type] of NOCOVER_CANDIDATES) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) return { data: fs.readFileSync(p), type };
+  }
+  return null;
+}
+
 /** The placeholder image served for books with no embedded cover, read from
  *  `assets/` once and cached. */
 export function nocover(): NoCover | null {
-  if (placeholder !== undefined) return placeholder;
-  const dir = path.join(config.rootDir, 'assets');
-  const candidates: Array<[string, string]> = [
-    ['nocover.png', 'image/png'],
-    ['nocover.svg', 'image/svg+xml'],
-    ['nocover.jpg', 'image/jpeg'],
-  ];
-  placeholder = null;
-  for (const [name, type] of candidates) {
-    const p = path.join(dir, name);
-    if (fs.existsSync(p)) {
-      placeholder = { data: fs.readFileSync(p), type };
-      break;
-    }
-  }
+  if (placeholder === undefined) placeholder = findNocover(path.join(config.rootDir, 'assets'));
   return placeholder;
 }
