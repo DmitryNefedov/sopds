@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-function findUp(name: string, from: string): string {
+/**
+ * Walk up from `from` looking for a directory that directly contains `name`.
+ * Returns that directory, or `from` unchanged if the filesystem root is reached
+ * without a hit.
+ */
+export function findUp(name: string, from: string): string {
   let dir = from;
   for (;;) {
     if (fs.existsSync(path.join(dir, name))) return dir;
