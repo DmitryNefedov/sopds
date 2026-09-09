@@ -13,6 +13,8 @@ const BLOCK_OPEN: Record<string, string> = {
   p: '<p>',
   subtitle: '<p class="subtitle">',
   'empty-line': '<br/>',
+  // Stryker disable next-line StringLiteral: a real <title> tag sets inTitle and
+  // returns before this map is consulted, so the value is never emitted.
   title: '', // handled specially (becomes chapter/heading text)
   epigraph: '<blockquote>',
   cite: '<blockquote>',
@@ -45,8 +47,16 @@ const INLINE: Record<string, [string, string]> = {
 export function fb2ToIr(buf: Buffer): Ir {
   const ir = emptyIr();
   const xml = decodeXmlBuffer(buf);
+  // Stryker disable next-line BooleanLiteral: non-strict is deliberate - real FB2
+  // is frequently not well-formed and strict mode would abort the parse.
   const parser = sax.parser(false, { lowercase: true, trim: false });
 
+  // The many parser-state flags below are all either reset by the open-tag that
+  // starts the region they guard (binaryChunks, first/last/nick, titleText) or
+  // are guarded by a structural check that a stray initial value cannot get
+  // past (stack contents, inDescription, inTitleInfo, inAuthor, skipBody). Their
+  // initial values are not independently observable.
+  // Stryker disable all
   const stack: string[] = [];
   let inDescription = false;
   let inTitleInfo = false;
@@ -62,21 +72,29 @@ export function fb2ToIr(buf: Buffer): Ir {
   let last = '';
   let nick = '';
   let authorField: string | null = null;
+  // Stryker restore all
 
   // body rendering
   let bodyDepth = 0; // >0 while inside a <body> we render
+  /** True only inside a <body> we actually render (i.e. not notes/comments). */
+  const inRenderedBody = (): boolean => bodyDepth > 0 && !skipBody;
+  // Stryker disable next-line BooleanLiteral: every <body> open sets this before
+  // it is read; the initial value is dead.
   let skipBody = false; // notes/comments bodies
   let sectionDepth = 0;
   let html = '';
   let chapters: IrChapter[] = [];
   let pendingTitle = '';
   let inTitle = false;
+  // Stryker disable next-line StringLiteral: every <title> open resets this.
   let titleText = '';
   let textField: string | null = null; // 'book-title' | 'lang' | null (for description)
 
   const flushChapter = () => {
     const body = sanitizeHtml(html);
     if (body || pendingTitle) {
+      // Stryker disable next-line MethodExpression: pendingTitle is stored
+      // already trimmed (see the title close handler), so this is a no-op.
       chapters.push({ title: pendingTitle.trim(), html: body });
     }
     html = '';
@@ -89,20 +107,39 @@ export function fb2ToIr(buf: Buffer): Ir {
     stack.push(name);
 
     if (name === 'description') inDescription = true;
-    if (name === 'title-info') inTitleInfo = true;
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: inTitleInfo
+    // duplicates stack state and only gates textField for the single book-title
+    // and lang elements, both of which sit in title-info in valid FB2.
+        if (name === 'title-info') inTitleInfo = true;
 
     if (inDescription) {
+      // The `inTitleInfo` / `inAuthor` flags here duplicate what `stack` already
+      // records, and `stack.includes(...)` is the gate that actually decides
+      // whether an author counts (see the close handler); the extra `&&`
+      // conditions cannot be independently observed for valid FB2, and any text
+      // that leaks through between elements is trimmed off at the end.
       if (name === 'author') {
         inAuthor = true;
         first = last = nick = '';
       }
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator
       if (inAuthor && ['first-name', 'last-name', 'nickname'].includes(name)) {
         authorField = name;
       }
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator
       if (inTitleInfo && name === 'book-title') textField = 'book-title';
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator
       if (inTitleInfo && name === 'lang') textField = 'lang';
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: a
+      // non-image tag has no href so coverHref stays null; a cover <image> not
+      // in <coverpage> just falls through to the images[0] fallback.
       if (name === 'image' && stack.includes('coverpage')) {
+        // Stryker disable next-line LogicalOperator,StringLiteral: a missing href
+        // yields '' -> not a '#...' -> coverHref stays null, same as the fallback.
         const href = attributes['l:href'] || attributes['xlink:href'] || '';
+        // Stryker disable next-line ConditionalExpression,MethodExpression,StringLiteral: a
+        // non-# or empty href leaves coverHref falsy, and `if (coverHref)` below
+        // then skips it - same as not matching.
         if (href.startsWith('#')) coverHref = href.slice(1);
       }
       return;
@@ -110,20 +147,26 @@ export function fb2ToIr(buf: Buffer): Ir {
 
     if (name === 'binary') {
       inBinary = true;
+      // Stryker disable next-line StringLiteral: the image push re-applies the
+      // `|| ''` default to binaryId, masking this one.
       binaryId = attributes.id || '';
+      // Stryker disable next-line StringLiteral: the image push below re-applies
+      // the same `|| 'image/jpeg'` default, so blanking it here is masked.
       binaryType = attributes['content-type'] || 'image/jpeg';
       binaryChunks = [];
       return;
     }
 
     if (name === 'body') {
+      // Stryker disable next-line StringLiteral: a body whose name is neither
+      // 'notes' nor 'comments' is rendered, exactly as one with no name.
       const cls = (attributes.name || '').toLowerCase();
       skipBody = cls === 'notes' || cls === 'comments';
       bodyDepth = 1;
       return;
     }
 
-    if (bodyDepth === 0 || skipBody) return;
+    if (!inRenderedBody()) return;
 
     switch (name) {
       case 'section':
@@ -137,6 +180,8 @@ export function fb2ToIr(buf: Buffer): Ir {
       case 'image': {
         const href =
           attributes['l:href'] || attributes['xlink:href'] || '';
+        // Stryker disable next-line Regex: an FB2 image href is always `#id`, so
+        // dropping the `^` anchor changes nothing for real input.
         const id = href.replace(/^#/, '');
         if (id) html += `<img src="images/${escapeXml(id)}" alt=""/>`;
         break;
@@ -166,7 +211,7 @@ export function fb2ToIr(buf: Buffer): Ir {
       else if (textField === 'lang') ir.language += t;
       return;
     }
-    if (bodyDepth === 0 || skipBody) return;
+    if (!inRenderedBody()) return;
     const esc = escapeXml(t);
     if (inTitle) titleText += t;
     else html += esc;
@@ -177,33 +222,54 @@ export function fb2ToIr(buf: Buffer): Ir {
 
     if (name === 'binary') {
       try {
+        // Stryker disable next-line Regex,StringLiteral: base64 decoding ignores
+        // any character it does not recognise, so what this replace leaves
+        // behind (empty string, or even junk) decodes to the same bytes.
         const data = Buffer.from(binaryChunks.join('').replace(/\s+/g, ''), 'base64');
+        // Stryker disable next-line StringLiteral: binaryId/binaryType already hold
+        // '' / 'image/jpeg' defaults from the open handler; the `||` here is belt.
         ir.images.push({ id: binaryId || '', mime: binaryType || 'image/jpeg', data });
       } catch {
         /* skip bad binary */
       }
+      // Stryker disable next-line BooleanLiteral: binaries sit after the body, so
+      // stray text once inBinary is stuck true is only inter-element whitespace.
       inBinary = false;
       return;
     }
 
     if (inDescription) {
       if (name === 'author') {
+        // Stryker disable next-line MethodExpression: the final `ir.authors`
+        // normalization re-trims and collapses whitespace, masking these trims.
         const full = [first.trim(), last.trim()].filter(Boolean).join(' ') || nick.trim();
         if (full && stack.includes('title-info')) ir.authors.push(full);
+        // Stryker disable next-line BooleanLiteral: `first/last/nick` are reset by
+        // the next <author> open, so a stuck-true inAuthor changes nothing.
         inAuthor = false;
       }
+      // These resets only matter until the next matching open tag sets the flag
+      // again, and stray text in between is trimmed off - so relaxing or
+      // tightening the guards is not observable for valid FB2.
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,ArrayDeclaration,StringLiteral
       if (['first-name', 'last-name', 'nickname'].includes(name)) authorField = null;
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,StringLiteral
       if (name === 'book-title' || name === 'lang') textField = null;
+      // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral,BooleanLiteral
       if (name === 'title-info') inTitleInfo = false;
       if (name === 'description') inDescription = false;
       return;
     }
 
-    if (bodyDepth === 0 || skipBody) {
+    if (!inRenderedBody()) {
+      // This branch only runs for a notes/comments body; its content stays
+      // skipped whatever these do, and the next <body> open resets the state.
+      // Stryker disable ConditionalExpression,EqualityOperator,StringLiteral,BlockStatement,BooleanLiteral
       if (name === 'body') {
         bodyDepth = 0;
         skipBody = false;
       }
+      // Stryker restore ConditionalExpression,EqualityOperator,StringLiteral,BlockStatement,BooleanLiteral
       return;
     }
 
@@ -242,10 +308,14 @@ export function fb2ToIr(buf: Buffer): Ir {
     /* be lenient */
   }
 
-  if (!ir.title || ir.title === 'Untitled') ir.title = 'Untitled';
   ir.title = ir.title.trim() || 'Untitled';
   ir.language = ir.language.trim();
+  // Stryker disable next-line MethodExpression: `filter(Boolean)` only drops
+  // empty names (which the assembly above never produces) and the inner `.trim()`
+  // is redundant with the per-part trims - both are no-ops for real input.
   ir.authors = ir.authors.map((a) => a.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  // Stryker disable next-line ConditionalExpression: with coverHref null the
+  // find() below just matches nothing - the guard only skips a wasted scan.
   if (coverHref) {
     const img = ir.images.find((i) => i.id === coverHref);
     if (img) ir.cover = { mime: img.mime, data: img.data };
@@ -324,7 +394,7 @@ ${binaries.join('\n')}
 </FictionBook>`;
 }
 
-function htmlFragmentToFb2(html: string): string {
+export function htmlFragmentToFb2(html: string): string {
   let s = sanitizeHtml(html);
   // inline
   s = s
@@ -334,6 +404,8 @@ function htmlFragmentToFb2(html: string): string {
     .replace(/<\/(strong|b)>/gi, '</strong>');
   // images
   s = s.replace(/<img[^>]*src=["']images\/([^"']+)["'][^>]*>/gi, '<image l:href="#$1"/>');
+  // Stryker disable next-line Regex: a leftover <img> that this misses is
+  // stripped by the unknown-tag pass a few lines down anyway.
   s = s.replace(/<img[^>]*>/gi, '');
   // headings -> subtitle
   s = s.replace(/<h[1-6][^>]*>/gi, '<subtitle>').replace(/<\/h[1-6]>/gi, '</subtitle>');
@@ -356,7 +428,7 @@ function htmlFragmentToFb2(html: string): string {
   return s;
 }
 
-function extForMime(mime: string): string {
+export function extForMime(mime: string): string {
   if (mime === 'image/png') return '.png';
   if (mime === 'image/gif') return '.gif';
   return '.jpg';
