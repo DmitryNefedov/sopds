@@ -2,6 +2,7 @@
   "name": "sopds-web",
   "version": "1.0.0",
   "description": "SimpleOPDS catalog UI (React + MUI)",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

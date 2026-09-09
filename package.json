@@ -2,7 +2,8 @@
   "name": "sopds",
   "version": "1.0.0",
   "private": true,
-  "description": "SimpleOPDS catalog server - Node.js + React rewrite",
+  "description": "SimpleOPDS - OPDS & web catalog server (Node.js + React)",
+  "license": "MIT",
   "workspaces": [
     "server",
     "web"

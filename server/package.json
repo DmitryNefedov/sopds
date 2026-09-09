@@ -1,7 +1,8 @@
 {
   "name": "sopds-server",
   "version": "1.0.0",
-  "description": "SimpleOPDS catalog server - Express API (rewrite of the Django sopds backend)",
+  "description": "SimpleOPDS catalog server - Express API",
+  "license": "MIT",
   "type": "module",
   "main": "dist/src/index.js",
   "scripts": {
