@@ -13,6 +13,8 @@
     "initdb": "tsx bin/initdb.ts",
     "typecheck": "tsc --noEmit",
     "test": "SOPDS_TEST_DB=mem tsx --test \"test/*.test.ts\"",
+    "test:coverage": "SOPDS_TEST_DB=mem tsx --test --experimental-test-coverage \"test/*.test.ts\"",
+    "mutate": "node bin/mutate.mjs",
     "reindex": "tsx bin/reindex-zips.ts",
     "samples": "tsx bin/make-samples.ts"
   },
@@ -31,6 +33,8 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/tap-runner": "^10.0.0",
     "@types/adm-zip": "^0.5.8",
     "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",

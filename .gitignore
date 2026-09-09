@@ -16,3 +16,8 @@ server/dist/
 web/dist/
 .env
 *.tsbuildinfo
+
+# Mutation testing
+.stryker-tmp/
+server/reports/
+stryker.log
