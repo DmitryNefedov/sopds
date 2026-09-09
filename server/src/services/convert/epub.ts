@@ -8,7 +8,6 @@ type Attrs = Record<string, string>;
 interface ManifestEntry {
   href: string;
   type: string;
-  props: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -32,10 +31,14 @@ export function epubToIr(buf: Buffer): Ir {
   }
   const opfBuf = read(opfPath);
   if (!opfBuf) throw new Error('EPUB: content.opf not found');
+  // Stryker disable next-line StringLiteral: for a path with no '/', both the
+  // `includes('/')` false-branch and the mutated `slice(0, -1 + 1)` give ''.
   const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
   const resolve = (href: string) => normalizePath(opfDir + decodeURIComponent(href));
 
   const manifest: Record<string, ManifestEntry> = {};
+  // Stryker disable next-line ArrayDeclaration: a stray idref just fails the
+  // `manifest[idref]` lookup in the spine loop and is skipped.
   const spine: string[] = [];
   let coverId: string | null = null;
   const dc: Record<string, string[]> = {
@@ -43,7 +46,6 @@ export function epubToIr(buf: Buffer): Ir {
     creator: [],
     language: [],
     identifier: [],
-    description: [],
   };
 
   const parser = sax.parser(false, { lowercase: true, trim: true });
@@ -55,8 +57,9 @@ export function epubToIr(buf: Buffer): Ir {
       manifest[a.id] = {
         href: a.href,
         type: a['media-type'] || '',
-        props: a.properties || '',
       };
+      // Stryker disable next-line StringLiteral: the `|| ''` fallback only feeds
+      // `.includes('cover-image')`; any other string is equally not that token.
       if ((a.properties || '').includes('cover-image')) coverId = a.id;
     } else if (n === 'itemref') {
       spine.push(a.idref);
@@ -77,6 +80,7 @@ export function epubToIr(buf: Buffer): Ir {
   ir.title = dc.title[0] || 'Untitled';
   ir.language = dc.language[0] || '';
   ir.identifier = dc.identifier[0] || ir.identifier;
+  // Stryker disable next-line MethodExpression: a defensive copy of the creators.
   ir.authors = dc.creator.slice();
 
   // images
@@ -85,6 +89,8 @@ export function epubToIr(buf: Buffer): Ir {
     const data = read(resolve(item.href));
     if (!data) continue;
     const imgId = basename(item.href);
+    // Stryker disable next-line ConditionalExpression,LogicalOperator: to reach
+    // here `item.type` already starts with 'image/', so it is never falsy.
     ir.images.push({ id: imgId, mime: item.type || mimeFromName(item.href), data });
   }
   if (coverId && manifest[coverId]) {
@@ -109,7 +115,7 @@ export function epubToIr(buf: Buffer): Ir {
   return ir;
 }
 
-function extractChapter(xhtml: string, _href: string, _ir: Ir): { title: string; html: string } {
+export function extractChapter(xhtml: string, _href: string, _ir: Ir): { title: string; html: string } {
   const bodyMatch = xhtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   let body = bodyMatch ? bodyMatch[1] : xhtml;
   const h = body.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
@@ -158,11 +164,15 @@ export function irToEpub(ir: Ir): Buffer {
   // images
   const imageEntries: ImageEntry[] = [];
   const seen = new Set<string>();
-  const pushImage = (img: { id: string; mime: string; data: Buffer }, forcedId?: string): string => {
-    const id = forcedId || sanitizeId(img.id);
+  const pushImage = (img: { id: string; mime: string; data: Buffer }): string => {
+    const id = sanitizeId(img.id);
+    // `extFromName` returns a leading-dot extension or '', and `extFromMime`
+    // always returns a leading-dot extension, so `ext` always starts with '.'.
     const ext = extFromName(img.id) || extFromMime(img.mime);
-    const file = `images/${id}${ext.startsWith('.') ? ext : '.' + ext}`;
-    if (seen.has(file)) return imageEntries.find((e) => e.data.equals(img.data))?.file || file;
+    const file = `images/${id}${ext}`;
+    // Already written under this name (two IR images with the same id): keep the
+    // first, point everyone at it.
+    if (seen.has(file)) return file;
     seen.add(file);
     zip.add(`OEBPS/${file}`, img.data);
     imageEntries.push({ id: `img-${imageEntries.length}`, file, mime: img.mime, data: img.data });
@@ -170,7 +180,7 @@ export function irToEpub(ir: Ir): Buffer {
   };
 
   let coverFile: string | null = null;
-  if (ir.cover) coverFile = pushImage({ id: 'cover', mime: ir.cover.mime, data: ir.cover.data }, 'cover');
+  if (ir.cover) coverFile = pushImage({ id: 'cover', mime: ir.cover.mime, data: ir.cover.data });
   for (const img of ir.images) {
     if (ir.cover && img.data.equals(ir.cover.data)) continue;
     pushImage(img);
@@ -238,7 +248,11 @@ ${heading}${balanceHtml(fixImgPaths(ch.html))}
     <dc:title>${escapeXml(ir.title)}</dc:title>
     <dc:language>${escapeXml(ir.language || 'en')}</dc:language>
     ${authorsXml}
-    <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta>
+    <meta property="dcterms:modified">${
+      // Stryker disable next-line Regex: an ISO string always ends with `.\d+Z`,
+      // so anchoring the strip with `$` is not observable.
+      new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+    }</meta>
     ${coverFile ? '<meta name="cover" content="cover-image"/>' : ''}
   </metadata>
   <manifest>
@@ -276,25 +290,27 @@ ${heading}${balanceHtml(fixImgPaths(ch.html))}
 
 // helpers -------------------------------------------------------------------
 
-function fixImgPaths(html: string): string {
+export function fixImgPaths(html: string): string {
   return String(html || '').replace(
     /(<img\b[^>]*\bsrc=)(["'])images\/([^"']+)\2/gi,
     (_m, p, q, name) => `${p}${q}../images/${name}${q}`,
   );
 }
 
-function basename(p: string): string {
+export function basename(p: string): string {
   const parts = String(p).split('/').pop() || '';
   return parts.split('\\').pop() || '';
 }
-function extFromName(name: string): string {
+export function extFromName(name: string): string {
   const m = String(name).toLowerCase().match(/\.[a-z0-9]+$/);
   return m ? m[0] : '';
 }
-function sanitizeId(s: string): string {
+export function sanitizeId(s: string): string {
+  // Stryker disable next-line StringLiteral: `String(s || '')` still ends up ''
+  // for an empty input, which the trailing `|| 'img'` then turns into 'img'.
   return String(s || 'img').replace(/[^a-z0-9._-]/gi, '_').replace(/\.[^.]+$/, '') || 'img';
 }
-function normalizePath(p: string): string {
+export function normalizePath(p: string): string {
   const parts: string[] = [];
   for (const seg of p.split('/')) {
     if (seg === '.' || seg === '') continue;

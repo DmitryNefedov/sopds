@@ -174,7 +174,8 @@ export function mobiToIr(buf: Buffer): Ir {
     firstImageIndex = rec0.readUInt32BE(0x6c);
     const exthFlags = rec0.readUInt32BE(0x80);
     if (mobiHeaderLen >= 0xe4 && 16 + 0xf2 + 2 <= rec0.length) {
-      extraFlags = rec0.readUInt16BE(16 + mobiHeaderLen - 2 >= rec0.length ? 0xf2 : 0xf2);
+      // "Extra record data flags" live at a fixed offset in record 0.
+      extraFlags = rec0.readUInt16BE(0xf2);
     }
     if (exthFlags & 0x40) {
       const exth = parseExth(rec0, 16 + mobiHeaderLen);
