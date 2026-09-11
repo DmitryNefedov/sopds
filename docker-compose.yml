@@ -66,6 +66,26 @@ services:
       retries: 5
       start_period: 30s
 
+  bot:
+    # A catalog *client*, not a service the catalog depends on (see
+    # CONTEXT.md "Telegram bot") - behind the "bot" profile so a plain
+    # `docker compose up` never starts it. `docker compose --profile bot up bot`
+    # brings it up once TELEGRAM_BOT_TOKEN is set in .env.
+    profiles: ["bot"]
+    build:
+      context: ./bot
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # Not `${VAR:?message}`: Compose interpolates every service's env block
+      # up front regardless of which profiles are active, so a required-var
+      # check here would break a plain `docker compose up` too. Left unset,
+      # the bot's own startup (config.ts) refuses to run and says why.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      SOPDS_API_URL: http://api:8000
+
   ui:
     build:
       context: ./web

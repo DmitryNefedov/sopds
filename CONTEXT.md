@@ -121,6 +121,13 @@ presenting and paging Books, not about finding them.
   native format alone. Distinct from the API's `download_formats`, which omits
   a non-convertible native format entirely and so cannot answer this question.
 
+Implementation, `bot/src/`: `search-flow.ts` runs a Title prefix search and its
+ADR-0001 fallback; `session.ts` is the Search session store; `result-page.ts`
+renders a Result page; `format-offer.ts` computes a Format offer;
+`api-client.ts` is the only thing that speaks HTTP to the server; `bot.ts`
+wires all of it to grammY's commands and `callback_query` handling, with
+`callback.ts` owning the inline-button `callback_data` encoding.
+
 ## Layout
 
 `server/src/` is grouped by role, not by file type:
@@ -134,6 +141,9 @@ presenting and paging Books, not about finding them.
 | `services/`   | `catalog`, `settings`, `convert/`, `scanner/` — the domain     |
 | `routes/`     | Express routers: `api`, `opds`, `admin`, `debug`               |
 | `utils/`      | leaves with no domain knowledge: `http`, `lang`, `cron`, `download` |
+
+`bot/src/` is flat — small enough that grouping by role would just be one file
+per folder. See "Telegram bot" above for what each file owns.
 
 `app.ts` assembles the Express app; `index.ts` is the process entry point that
 opens the port and starts the Scanner. Dependencies point inward — `routes` use

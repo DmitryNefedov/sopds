@@ -6,6 +6,10 @@ MOBI, PDF, DjVu, and `.zip` archives of those.
 - **API** — Express + TypeScript, ESM (`server/`). Compiled with `tsc` to
   `server/dist/`; dev runs the `.ts` via `tsx`.
 - **UI** — React + Vite + MUI (`web/`), served by nginx.
+- **Telegram bot** — grammY + TypeScript, ESM (`bot/`). A pure client of the
+  API above (see [`CONTEXT.md`](CONTEXT.md#telegram-bot) and
+  [ADR 0001](docs/adr/0001-title-only-prefix-search-for-the-bot.md)); optional,
+  off unless `TELEGRAM_BOT_TOKEN` is set.
 - **DB** — PostgreSQL. Schema is a Liquibase changelog
   ([`server/db/changelog/`](server/db/changelog/)).
 
@@ -38,6 +42,10 @@ MOBI, PDF, DjVu, and `.zip` archives of those.
   Optionally gated by `SOPDS_ADMIN_TOKEN`.
 - **E-ink mode** for e-readers — auto-detected, with a manual toggle (`?eink=1`),
   saved per device.
+- **Telegram bot** (`bot/`) — `/search <title>` runs a **Title prefix search**
+  (falling back to a title-anywhere match when the prefix finds nothing; see
+  ADR 0001), sends five books at a time as a cover album plus buttons, and
+  offers each picked book in every format it can actually be delivered in.
 
 ## Deploy with Docker Compose
 
@@ -49,6 +57,7 @@ services, all with healthchecks:
 | `postgres` | [`server/Dockerfile.postgres`](server/Dockerfile.postgres) | `postgres:16-alpine` with the schema baked in by Liquibase at build time |
 | `api` | [`server/Dockerfile`](server/Dockerfile) | Express API + scanner + OPDS feed |
 | `ui` | [`web/Dockerfile`](web/Dockerfile) | nginx serving the React build, proxying `/api`, `/opds`, `/debug`, `/healthz` |
+| `bot` | [`bot/Dockerfile`](bot/Dockerfile) | Telegram bot, long-polling; behind the `bot` profile, so it doesn't start unless asked for |
 
 ```bash
 cp .env.example .env                 # set credentials, ports, catalog title
@@ -56,6 +65,9 @@ cp .env.example .env                 # set credentials, ports, catalog title
 # at real host paths
 docker compose up -d --build
 docker compose exec api node dist/bin/scan.js   # first import
+
+# Telegram bot (optional — needs TELEGRAM_BOT_TOKEN in .env):
+docker compose --profile bot up -d --build bot
 ```
 
 - Web UI: `http://<host>:<SOPDS_UI_PORT>`
@@ -93,6 +105,12 @@ npm run dev                           # tsx watch on http://localhost:8000
 cd ../web
 npm install
 npm run dev                           # http://localhost:5173, proxies to the API
+
+# Telegram bot (optional)
+cd ../bot
+npm install
+cp .env.example .env                  # set TELEGRAM_BOT_TOKEN, SOPDS_API_URL
+npm run dev                           # tsx watch, long-polls Telegram
 ```
 
 Single-process: `cd web && npm run build`, then `cd ../server && npm start`
@@ -136,6 +154,9 @@ npm run typecheck                     # tsc --noEmit
 PostgreSQL ([PGlite](https://pglite.dev), WASM), so no database is needed. Point
 at a real one with `SOPDS_TEST_DB= PGHOST=… PGDATABASE=… npm test` (tests
 `TRUNCATE` their tables first).
+
+`bot/` has its own suite (`cd bot && npm test`) — no database or live Telegram
+Bot API token needed; it fakes both the catalog API and the Bot API itself.
 
 ## License
 
