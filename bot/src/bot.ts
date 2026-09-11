@@ -12,10 +12,25 @@ const START_MESSAGE =
 
 const NOT_AUTHORIZED = 'You are not authorized to use this bot.';
 
-/** `config.allowedUsers === null` means unrestricted; otherwise `ctx.from.id`
- *  (absent for update types with no identifiable sender) must be in it. */
-function isAllowed(config: BotConfig, userId: number | undefined): boolean {
-  return config.allowedUsers === null || (userId !== undefined && config.allowedUsers.has(userId));
+/**
+ * Allowed when either list matches: the sender is in `allowedUsers`, or the
+ * chat itself is in `allowedChats` (a trusted group, regardless of which
+ * member posted). Because it's an OR over the *sender's own id* rather than
+ * "allowedUsers only applies in private chats", a listed user's identity
+ * travels with them — they pass from any group too, allowlisted or not.
+ * `allowedChats` is what lets an *un*listed member of a trusted group in;
+ * it does not narrow what a listed user can already do.
+ * Unrestricted — the default — only when *both* are `null`; setting either
+ * one turns restriction on, so allowing a group without also opening every
+ * private chat (or vice versa) is the common case, not a special one.
+ */
+function isAllowed(config: BotConfig, ctx: Context): boolean {
+  if (config.allowedUsers === null && config.allowedChats === null) return true;
+  const userId = ctx.from?.id;
+  if (config.allowedUsers && userId !== undefined && config.allowedUsers.has(userId)) return true;
+  const chatId = ctx.chat?.id;
+  if (config.allowedChats && chatId !== undefined && config.allowedChats.has(chatId)) return true;
+  return false;
 }
 
 /** Sends a Search outcome: the album of covers (skipped when there are no
@@ -46,7 +61,7 @@ export function createBot(
   // an unlisted user gets a plain refusal (or a callback alert) and nothing
   // else runs for them.
   bot.use(async (ctx, next) => {
-    if (isAllowed(config, ctx.from?.id)) return next();
+    if (isAllowed(config, ctx)) return next();
     if (ctx.callbackQuery) {
       return ctx.answerCallbackQuery({ text: NOT_AUTHORIZED, show_alert: true });
     }

@@ -29,7 +29,12 @@ const BOT_INFO: UserFromGetMe = {
   supports_join_request_queries: false,
 };
 
-const BASE_CONFIG: BotConfig = { token: 't', apiUrl: 'http://api.local', allowedUsers: null };
+const BASE_CONFIG: BotConfig = {
+  token: 't',
+  apiUrl: 'http://api.local',
+  allowedUsers: null,
+  allowedChats: null,
+};
 
 interface Recorded {
   method: string;
@@ -77,14 +82,17 @@ function fullPage(items: BotBook[]): BotPage<BotBook> {
   return { items, total: items.length, page: 1, limit: 5, pages: 1, has_next: false, has_prev: false };
 }
 
-function messageUpdate(text: string, userId = 100): Update {
+/** Defaults to a private chat, where Telegram's chat id equals the sender's
+ *  user id; pass `chatId` to place the sender inside a group instead (group
+ *  chat ids are negative and distinct from any member's user id). */
+function messageUpdate(text: string, userId = 100, chatId = userId): Update {
   const commandLength = text.startsWith('/') ? text.split(' ')[0].length : 0;
   return {
     update_id: 1,
     message: {
       message_id: 1,
       date: 0,
-      chat: { id: userId, type: 'private' },
+      chat: { id: chatId, type: chatId === userId ? 'private' : 'group' },
       from: { id: userId, is_bot: false, first_name: 'U' },
       text,
       ...(commandLength ? { entities: [{ type: 'bot_command', offset: 0, length: commandLength }] } : {}),
@@ -92,7 +100,7 @@ function messageUpdate(text: string, userId = 100): Update {
   } as Update;
 }
 
-function callbackUpdate(data: string, userId = 100): Update {
+function callbackUpdate(data: string, userId = 100, chatId = userId): Update {
   return {
     update_id: 2,
     callback_query: {
@@ -103,7 +111,7 @@ function callbackUpdate(data: string, userId = 100): Update {
       message: {
         message_id: 2,
         date: 0,
-        chat: { id: userId, type: 'private' },
+        chat: { id: chatId, type: chatId === userId ? 'private' : 'group' },
         text: 'previous message',
       },
     },
@@ -283,4 +291,70 @@ test('a user inside allowedUsers is unaffected', async () => {
 
   assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
   assert.match(String(calls[0].body.text), /\/search/);
+});
+
+// ---- allowedChats (TELEGRAM_ALLOWED_CHATS) -----------------------------
+
+test('any member of an allowed group can use the bot, even one not individually allowlisted', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  // allowedUsers is set (and does not include 999) - allowedChats grants
+  // access independently, not just when allowedUsers is left unrestricted.
+  const config: BotConfig = {
+    ...BASE_CONFIG,
+    allowedUsers: new Set([1, 2, 3]),
+    allowedChats: new Set([-100999]),
+  };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/start', 999, -100999));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /\/search/);
+});
+
+test('an allowedUsers member is not blocked by posting from a non-allowlisted group - identity travels with them', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  const config: BotConfig = {
+    ...BASE_CONFIG,
+    allowedUsers: new Set([100]),
+    allowedChats: new Set([-100999]),
+  };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  // user 100 is individually trusted, so an OR match still passes even from
+  // a group that is not itself on allowedChats.
+  await bot.handleUpdate(messageUpdate('/start', 100, -1005555));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /\/search/);
+});
+
+test('a user in neither list, posting from a group in neither list, is refused', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  const config: BotConfig = {
+    ...BASE_CONFIG,
+    allowedUsers: new Set([100]),
+    allowedChats: new Set([-100999]),
+  };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/start', 999, -1005555));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /not authorized/);
+});
+
+test('setting only allowedChats still restricts private chats (both are null for "open", not either)', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  const config: BotConfig = { ...BASE_CONFIG, allowedChats: new Set([-100999]) };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/start', 12345));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /not authorized/);
 });

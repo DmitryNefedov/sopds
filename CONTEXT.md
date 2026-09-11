@@ -120,12 +120,17 @@ presenting and paging Books, not about finding them.
   every convertible format when its own format is one of them, otherwise its
   native format alone. Distinct from the API's `download_formats`, which omits
   a non-convertible native format entirely and so cannot answer this question.
-- **Allowlist** — `TELEGRAM_ALLOWED_USERS`, a set of Telegram numeric user ids
-  (`config.allowedUsers`); `null` (unset, empty, or entirely non-numeric) means
-  unrestricted, which is the default — the catalog itself has no notion of a
-  user to gate access with, so this is the only access control the bot has. A
-  sender outside it gets a plain refusal (or a callback alert) before any
-  other handler runs, never a silent drop.
+- **Allowlist** — `TELEGRAM_ALLOWED_USERS` and `TELEGRAM_ALLOWED_CHATS`
+  (`config.allowedUsers` / `allowedChats`), two independent sets of Telegram
+  numeric ids — user ids and group/supergroup chat ids (negative)
+  respectively. Access is granted whenever *either* matches: a listed user's
+  identity travels with them into any chat, allowlisted or not, while a
+  listed group lets in any of its members, individually listed or not. Both
+  `null` (unset, empty, or entirely non-numeric) means unrestricted, which is
+  the default — the catalog itself has no notion of a user to gate access
+  with, so this pair is the only access control the bot has. A sender outside
+  both gets a plain refusal (or a callback alert) before any other handler
+  runs, never a silent drop.
 
 Implementation, `bot/src/`: `search-flow.ts` runs a Title prefix search and its
 ADR-0001 fallback; `session.ts` is the Search session store; `result-page.ts`
