@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { UserFromGetMe, Update } from '@grammyjs/types';
 import { createBot } from '../src/bot.js';
+import type { BotConfig } from '../src/config.js';
 import { CatalogClient } from '../src/api-client.js';
 import type { BotBook, BotPage } from '../src/api-client.js';
 import { clearAllSessions } from '../src/session.js';
@@ -27,6 +28,8 @@ const BOT_INFO: UserFromGetMe = {
   can_manage_bots: false,
   supports_join_request_queries: false,
 };
+
+const BASE_CONFIG: BotConfig = { token: 't', apiUrl: 'http://api.local', allowedUsers: null };
 
 interface Recorded {
   method: string;
@@ -74,33 +77,33 @@ function fullPage(items: BotBook[]): BotPage<BotBook> {
   return { items, total: items.length, page: 1, limit: 5, pages: 1, has_next: false, has_prev: false };
 }
 
-function messageUpdate(text: string): Update {
+function messageUpdate(text: string, userId = 100): Update {
   const commandLength = text.startsWith('/') ? text.split(' ')[0].length : 0;
   return {
     update_id: 1,
     message: {
       message_id: 1,
       date: 0,
-      chat: { id: 100, type: 'private' },
-      from: { id: 100, is_bot: false, first_name: 'U' },
+      chat: { id: userId, type: 'private' },
+      from: { id: userId, is_bot: false, first_name: 'U' },
       text,
       ...(commandLength ? { entities: [{ type: 'bot_command', offset: 0, length: commandLength }] } : {}),
     },
   } as Update;
 }
 
-function callbackUpdate(data: string): Update {
+function callbackUpdate(data: string, userId = 100): Update {
   return {
     update_id: 2,
     callback_query: {
       id: 'cb1',
-      from: { id: 100, is_bot: false, first_name: 'U' },
+      from: { id: userId, is_bot: false, first_name: 'U' },
       chat_instance: 'x',
       data,
       message: {
         message_id: 2,
         date: 0,
-        chat: { id: 100, type: 'private' },
+        chat: { id: userId, type: 'private' },
         text: 'previous message',
       },
     },
@@ -112,7 +115,7 @@ test.beforeEach(() => clearAllSessions());
 test('/start replies with the help text', async () => {
   const { calls, fetchFn } = fakeTelegram();
   const api = new CatalogClient({ baseUrl: 'http://api.local' });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -125,7 +128,7 @@ test('/start replies with the help text', async () => {
 test('/search with no query replies with usage instead of searching', async () => {
   const { calls, fetchFn } = fakeTelegram();
   const api = new CatalogClient({ baseUrl: 'http://api.local' });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -140,7 +143,7 @@ test('/search with results sends a media group then a message with pick buttons'
     baseUrl: 'http://api.local',
     fetchFn: (async () => jsonResponse(fullPage([book(1), book(2)]))) as typeof fetch,
   });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -172,7 +175,7 @@ test('picking a book answers the callback and offers its formats', async () => {
         }),
       )) as typeof fetch,
   });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -193,7 +196,7 @@ test('picking a book that vanished (404) reports it rather than throwing', async
     fetchFn: (async () =>
       new Response(JSON.stringify({ error: 'not found' }), { status: 404 })) as typeof fetch,
   });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, notFoundApi, {
+  const bot = createBot(BASE_CONFIG, notFoundApi, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -206,7 +209,7 @@ test('picking a book that vanished (404) reports it rather than throwing', async
 test('a "more" callback on an unknown session reports it as expired', async () => {
   const { calls, fetchFn } = fakeTelegram();
   const api = new CatalogClient({ baseUrl: 'http://api.local' });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -223,7 +226,7 @@ test('downloading a format streams the file back as a document', async (t) => {
     fetchFn: (async () => jsonResponse(book(5))) as typeof fetch,
   });
   t.mock.method(globalThis, 'fetch', async () => new Response(Buffer.from('book bytes'), { status: 200 }));
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
@@ -235,10 +238,49 @@ test('downloading a format streams the file back as a document', async (t) => {
 test('a malformed callback just answers the callback query and sends nothing else', async () => {
   const { calls, fetchFn } = fakeTelegram();
   const api = new CatalogClient({ baseUrl: 'http://api.local' });
-  const bot = createBot({ token: 't', apiUrl: 'http://api.local' }, api, {
+  const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
     client: { fetch: fetchFn },
   });
   await bot.handleUpdate(callbackUpdate('garbage'));
   assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery']);
+});
+
+// ---- allowedUsers (TELEGRAM_ALLOWED_USERS) -----------------------------
+
+test('a user outside allowedUsers gets a plain refusal instead of running /search', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  const config: BotConfig = { ...BASE_CONFIG, allowedUsers: new Set([1, 2, 3]) };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/search hobbit', 999));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /not authorized/);
+});
+
+test('a user outside allowedUsers gets an alert instead of a callback running', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  const config: BotConfig = { ...BASE_CONFIG, allowedUsers: new Set([1, 2, 3]) };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(callbackUpdate(pickData(5), 999));
+
+  assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery']);
+  assert.equal(calls[0].body.show_alert, true);
+  assert.match(String(calls[0].body.text), /not authorized/);
+});
+
+test('a user inside allowedUsers is unaffected', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({ baseUrl: 'http://api.local' });
+  const config: BotConfig = { ...BASE_CONFIG, allowedUsers: new Set([100]) };
+  const bot = createBot(config, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/start', 100));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /\/search/);
 });

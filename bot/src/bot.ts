@@ -10,6 +10,14 @@ const START_MESSAGE =
   'Send /search <title> to look up a book by its title.\n' +
   'Pick a book from the results, then a format, to download it.';
 
+const NOT_AUTHORIZED = 'You are not authorized to use this bot.';
+
+/** `config.allowedUsers === null` means unrestricted; otherwise `ctx.from.id`
+ *  (absent for update types with no identifiable sender) must be in it. */
+function isAllowed(config: BotConfig, userId: number | undefined): boolean {
+  return config.allowedUsers === null || (userId !== undefined && config.allowedUsers.has(userId));
+}
+
 /** Sends a Search outcome: the album of covers (skipped when there are no
  *  results) followed by the one message carrying the summary and buttons. */
 async function sendSearchOutcome(ctx: Context, outcome: SearchOutcome): Promise<void> {
@@ -33,6 +41,21 @@ export function createBot(
   grammyOptions?: GrammyBotConfig<Context>,
 ): Bot {
   const bot = new Bot(config.token, grammyOptions);
+
+  // Access control first, ahead of every command/callback handler below:
+  // an unlisted user gets a plain refusal (or a callback alert) and nothing
+  // else runs for them.
+  bot.use(async (ctx, next) => {
+    if (isAllowed(config, ctx.from?.id)) return next();
+    if (ctx.callbackQuery) {
+      return ctx.answerCallbackQuery({ text: NOT_AUTHORIZED, show_alert: true });
+    }
+    // Anything with a chat (i.e. every message) gets a plain refusal; other
+    // update types the bot never handles anyway (reactions, chat-member
+    // updates, ...) are just dropped rather than risking a reply with no
+    // chat to send it to.
+    if (ctx.chat) return ctx.reply(NOT_AUTHORIZED);
+  });
 
   bot.command('start', (ctx) => ctx.reply(START_MESSAGE));
 

@@ -84,6 +84,7 @@ services:
       # check here would break a plain `docker compose up` too. Left unset,
       # the bot's own startup (config.ts) refuses to run and says why.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
       SOPDS_API_URL: http://api:8000
 
   ui:

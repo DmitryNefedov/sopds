@@ -120,13 +120,21 @@ presenting and paging Books, not about finding them.
   every convertible format when its own format is one of them, otherwise its
   native format alone. Distinct from the API's `download_formats`, which omits
   a non-convertible native format entirely and so cannot answer this question.
+- **Allowlist** — `TELEGRAM_ALLOWED_USERS`, a set of Telegram numeric user ids
+  (`config.allowedUsers`); `null` (unset, empty, or entirely non-numeric) means
+  unrestricted, which is the default — the catalog itself has no notion of a
+  user to gate access with, so this is the only access control the bot has. A
+  sender outside it gets a plain refusal (or a callback alert) before any
+  other handler runs, never a silent drop.
 
 Implementation, `bot/src/`: `search-flow.ts` runs a Title prefix search and its
 ADR-0001 fallback; `session.ts` is the Search session store; `result-page.ts`
 renders a Result page; `format-offer.ts` computes a Format offer;
-`api-client.ts` is the only thing that speaks HTTP to the server; `bot.ts`
-wires all of it to grammY's commands and `callback_query` handling, with
-`callback.ts` owning the inline-button `callback_data` encoding.
+`config.ts` parses the Allowlist; `api-client.ts` is the only thing that
+speaks HTTP to the server; `bot.ts` wires all of it to grammY's commands and
+`callback_query` handling (the Allowlist check is the first middleware,
+ahead of everything else), with `callback.ts` owning the inline-button
+`callback_data` encoding.
 
 ## Layout
 
