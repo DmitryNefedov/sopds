@@ -95,6 +95,32 @@ term; this file is the prose.
 - **Page&lt;T&gt;** — a slice of a listing: `items` plus `total` / `page` /
   `limit` / `pages` / `has_next` / `has_prev`.
 
+## Telegram bot
+
+The bot is a catalog *client*, not a second catalog: it reads the same HTTP API
+an OPDS reader would and owns no schema. Its vocabulary is therefore about
+presenting and paging Books, not about finding them.
+
+- **Title prefix search** — the bot's only search: Books whose title *starts
+  with* the query (`catalog.listBooks`'s `prefix`, i.e. `search_title LIKE
+  'Q%'` after `normalize` upper-cases and trims). Deliberately *not* **Unified
+  search**, which also matches author and series names and so answers a
+  query with Books whose titles contain none of it. The cost is that a word
+  from the middle of a title does not match; see
+  [ADR 0001](docs/adr/0001-title-only-prefix-search-for-the-bot.md).
+- **Result page** — one batch of five Books, sent as a single album of covers
+  plus one message carrying the selection buttons. The unit the user pages
+  through: "more" means the next result page, never a longer one.
+- **Search session** — a **Title prefix search** plus its page cursor, addressed
+  by an opaque short token so a paging button can name it within the 64 bytes
+  Telegram allows. Cache-shaped and deliberately not durable: a session
+  outlives neither a restart nor eviction, and a button naming a session that
+  is gone reports the search as expired rather than guessing.
+- **Format offer** — the formats a given Book can actually be delivered in:
+  every convertible format when its own format is one of them, otherwise its
+  native format alone. Distinct from the API's `download_formats`, which omits
+  a non-convertible native format entirely and so cannot answer this question.
+
 ## Layout
 
 `server/src/` is grouped by role, not by file type:
