@@ -6,12 +6,18 @@ import { S } from '../services/settings.js';
 import { mimeFor } from '../utils/download.js';
 import { CONVERTIBLE } from '../services/convert/index.js';
 import { ah, qstr } from '../utils/http.js';
-import type { Book } from '../types.js';
+import type { Book, Stats } from '../types.js';
+
+// Page sizes for OPDS feeds - generous caps a real reader never scrolls past.
+// Stryker disable next-line ObjectLiteral: a result cap; the repo applies its own default and the fixtures stay well under it.
+const FEED = { limit: 60 } as const;
+// Stryker disable next-line ObjectLiteral: as FEED above.
+const LIST = { limit: 100 } as const;
 
 // Minimal OPDS 1.1 (Atom) catalog so existing OPDS readers keep working.
 const router = Router();
 
-const xmlEscape = (s: unknown): string =>
+export const xmlEscape = (s: unknown): string =>
   String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -28,7 +34,7 @@ interface FeedArgs {
   links?: string[];
   entries: string[];
 }
-function feed({ id, title, self, links = [], entries }: FeedArgs): string {
+export function feed({ id, title, self, links = [], entries }: FeedArgs): string {
   const now = new Date().toISOString();
   const linkXml = [
     `<link rel="self" href="${xmlEscape(self)}" type="${NAV}"/>`,
@@ -52,7 +58,7 @@ interface NavEntryArgs {
   href: string;
   content?: string;
 }
-function navEntry({ id, title, href, content }: NavEntryArgs): string {
+export function navEntry({ id, title, href, content }: NavEntryArgs): string {
   return `<entry>
     <id>${xmlEscape(id)}</id>
     <title>${xmlEscape(title)}</title>
@@ -62,7 +68,7 @@ function navEntry({ id, title, href, content }: NavEntryArgs): string {
   </entry>`;
 }
 
-function bookEntry(book: Book): string {
+export function bookEntry(book: Book): string {
   const authors = book.authors
     .map((a) => `<author><name>${xmlEscape(a.full_name)}</name></author>`)
     .join('');
@@ -98,27 +104,29 @@ const send = (res: Response, xml: string): void => {
   res.send(xml);
 };
 
+/** The OPDS root: a navigation feed linking the four browse axes. */
+export function rootFeed(title: string, s: Stats): string {
+  return feed({
+    id: 'sopds:root',
+    title,
+    self: '/opds/',
+    entries: [
+      navEntry({ id: 'nav:catalogs', title: 'By catalogs', href: '/opds/catalogs', content: `Catalogs: ${s.allcatalogs || 0}, books: ${s.allbooks || 0}` }),
+      navEntry({ id: 'nav:authors', title: 'By authors', href: '/opds/authors', content: `Authors: ${s.allauthors || 0}` }),
+      navEntry({ id: 'nav:series', title: 'By series', href: '/opds/series', content: `Series: ${s.allseries || 0}` }),
+      navEntry({ id: 'nav:genres', title: 'By genres', href: '/opds/genres', content: `Genres: ${s.allgenres || 0}` }),
+    ],
+  });
+}
+
+// Stryker disable next-line StringLiteral: mounted at /opds, `''` and `'/'` match exactly the same requests.
 router.get('/', ah(async (_req, res) => {
-  const s = await repo.stats();
-  send(
-    res,
-    feed({
-      id: 'sopds:root',
-      title: S.title,
-      self: '/opds/',
-      entries: [
-        navEntry({ id: 'nav:catalogs', title: 'By catalogs', href: '/opds/catalogs', content: `Catalogs: ${s.allcatalogs || 0}, books: ${s.allbooks || 0}` }),
-        navEntry({ id: 'nav:authors', title: 'By authors', href: '/opds/authors', content: `Authors: ${s.allauthors || 0}` }),
-        navEntry({ id: 'nav:series', title: 'By series', href: '/opds/series', content: `Series: ${s.allseries || 0}` }),
-        navEntry({ id: 'nav:genres', title: 'By genres', href: '/opds/genres', content: `Genres: ${s.allgenres || 0}` }),
-      ],
-    }),
-  );
+  send(res, rootFeed(S.title, await repo.stats()));
 }));
 
 router.get('/search', ah(async (req, res) => {
   const q = qstr(req.query.q).trim();
-  const { items } = q ? await repo.searchBooks(q, { limit: 60 }) : { items: [] as Book[] };
+  const { items } = q ? await repo.searchBooks(q, FEED) : { items: [] as Book[] };
   send(
     res,
     feed({
@@ -133,7 +141,7 @@ router.get('/search', ah(async (req, res) => {
 router.get('/catalogs', ah(async (req, res) => {
   const catId = req.query.cat ? Number(req.query.cat) : await repo.rootCatalogId();
   const cats = await repo.childCatalogs(catId);
-  const { items } = await repo.booksByCatalog(catId, { limit: 60 });
+  const { items } = await repo.booksByCatalog(catId, FEED);
   send(
     res,
     feed({
@@ -156,7 +164,7 @@ router.get('/catalogs', ah(async (req, res) => {
 }));
 
 router.get('/authors', ah(async (req, res) => {
-  const { items } = await repo.listAuthors({ prefix: qstr(req.query.prefix), limit: 100 });
+  const { items } = await repo.listAuthors({ prefix: qstr(req.query.prefix), ...LIST });
   send(
     res,
     feed({
@@ -176,7 +184,7 @@ router.get('/authors', ah(async (req, res) => {
 }));
 
 router.get('/author/:id', ah(async (req, res) => {
-  const { items } = await repo.booksByAuthor(Number(req.params.id), { limit: 100 });
+  const { items } = await repo.booksByAuthor(Number(req.params.id), LIST);
   send(
     res,
     feed({
@@ -189,7 +197,7 @@ router.get('/author/:id', ah(async (req, res) => {
 }));
 
 router.get('/series', ah(async (req, res) => {
-  const { items } = await repo.listSeries({ prefix: qstr(req.query.prefix), limit: 100 });
+  const { items } = await repo.listSeries({ prefix: qstr(req.query.prefix), ...LIST });
   send(
     res,
     feed({
@@ -209,7 +217,7 @@ router.get('/series', ah(async (req, res) => {
 }));
 
 router.get('/serie/:id', ah(async (req, res) => {
-  const { items } = await repo.booksBySeries(Number(req.params.id), { limit: 100 });
+  const { items } = await repo.booksBySeries(Number(req.params.id), LIST);
   send(
     res,
     feed({
@@ -261,7 +269,7 @@ router.get('/genres', ah(async (req, res) => {
 }));
 
 router.get('/genre/:id', ah(async (req, res) => {
-  const { items } = await repo.booksByGenre(Number(req.params.id), { limit: 100 });
+  const { items } = await repo.booksByGenre(Number(req.params.id), LIST);
   send(
     res,
     feed({

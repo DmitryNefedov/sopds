@@ -36,7 +36,7 @@ export function translitName(s: string): string {
   let out = '';
   for (const ch of (s || '').toLowerCase()) {
     if (TRANSLIT[ch] !== undefined) out += TRANSLIT[ch];
-    else if (/[a-z0-9._-]/i.test(ch)) out += ch;
+    else if (/[a-z0-9._-]/.test(ch)) out += ch; // already lower-cased above
     else if (ch === ' ') out += '_';
   }
   return out.replace(/_+/g, '_').replace(/^_|_$/g, '') || 'book';

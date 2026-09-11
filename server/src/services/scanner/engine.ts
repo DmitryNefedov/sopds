@@ -24,7 +24,7 @@ import type { BookMeta, ScanStats } from '../../types.js';
 //    threadpool) while every write funnels through one serialised Writer
 
 type LogFn = (msg: string) => void;
-interface ScanCtx {
+export interface ScanCtx {
   bookExtensions: string[];
   zipScan: boolean;
   deleteMissing: boolean;
@@ -41,6 +41,19 @@ interface WalkStats {
 const CAT_NORMAL = 0;
 const CAT_ZIP = 1;
 
+type Setting = typeof setting;
+
+/** Read the walk's tunables out of the live settings in one place, so the walk
+ *  itself takes them as a plain argument and can be driven from a test. */
+export function buildCtx(get: Setting = setting): ScanCtx {
+  return {
+    bookExtensions: get('bookExtensions').toLowerCase().match(/\S+/g) ?? [],
+    zipScan: get('zipScan'),
+    deleteMissing: get('deleteMissing'),
+    concurrency: scanConcurrency(get),
+  };
+}
+
 /** Upper bound on books per bulk INSERT: well under Postgres' parameter limit,
  *  big enough that round-trip cost stops mattering. The Writer clamps it to
  *  `scanBatchSize` so a small batch size still publishes often. */
@@ -49,24 +62,38 @@ const MAX_ROWS_PER_STATEMENT = 500;
 /** How often the catalog-wide counters are recomputed mid-scan. */
 const COUNTER_INTERVAL_MS = 10_000;
 
-// Populated at the start of each runOnce() from the current settings.
-let CTX: ScanCtx = { bookExtensions: [], zipScan: true, deleteMissing: true, concurrency: 1 };
+/**
+ * A throttle for the mid-scan counter refresh: calling the returned function
+ * runs `refresh` at most once per `COUNTER_INTERVAL_MS`, and always on the
+ * first call. `updateCounters()` is five COUNT(*) scans, far too costly to run
+ * on every committed batch; `runOnce` recounts once at the end so the final
+ * numbers are exact regardless.
+ */
+export function makeCounterGate(
+  refresh: () => Promise<void>,
+  now: () => number = Date.now,
+): () => Promise<void> {
+  let last = -Infinity;
+  return async () => {
+    if (now() - last >= COUNTER_INTERVAL_MS) {
+      last = now();
+      await refresh();
+    }
+  };
+}
 
 // ---- name to id caches -------------------------------------------------
 // A 700k-book scan would otherwise re-run the same SELECT for every author,
 // series, genre and directory it has already seen. These tables only ever grow
 // during a scan and their names are unique, so a committed id stays valid; the
 // caches are reset for each run and dropped if a batch is rolled back.
-let authorIds = new Map<string, number>();
-let seriesIds = new Map<string, number>();
-let genreIds = new Map<string, number>();
-let catalogIds = new Map<string, number>();
+const authorIds = new Map<string, number>();
+const seriesIds = new Map<string, number>();
+const genreIds = new Map<string, number>();
+const catalogIds = new Map<string, number>();
 
-function resetCaches(): void {
-  authorIds = new Map();
-  seriesIds = new Map();
-  genreIds = new Map();
-  catalogIds = new Map();
+export function resetCaches(): void {
+  for (const m of [authorIds, seriesIds, genreIds, catalogIds]) m.clear();
 }
 
 /** Arrays are legal pg bind values but not part of the narrow `SqlParam` union. */
@@ -74,13 +101,13 @@ const arr = (...values: unknown[][]): SqlParam[] => values as unknown as SqlPara
 
 // ---- per-transaction query helpers ----------------------------------
 
-async function addCatTree(
+export async function addCatTree(
   cx: Query,
   relPath: string,
   catType = CAT_NORMAL,
   size = 0,
 ): Promise<number> {
-  const key = !relPath || relPath === '.' ? '.' : relPath;
+  const key = relPath || '.';
   const cached = catalogIds.get(key);
   if (cached !== undefined) return cached;
 
@@ -96,17 +123,18 @@ async function addCatTree(
     return id;
   }
 
-  const existing = await cx.get<{ id: number }>('SELECT id FROM catalogs WHERE path = ?', [relPath]);
+  const existing = await cx.get<{ id: number }>('SELECT id FROM catalogs WHERE path = ?', [key]);
   if (existing) {
     catalogIds.set(key, existing.id);
     return existing.id;
   }
-  const parent = path.dirname(relPath);
-  const parentId = await addCatTree(cx, parent === relPath ? '.' : parent);
+  // `path.dirname` always shrinks a relative path toward '.', so the recursion
+  // terminates in the `key === '.'` branch above.
+  const parentId = await addCatTree(cx, path.dirname(key));
   const row = await cx.get<{ id: number }>(
     `INSERT INTO catalogs (parent_id, cat_name, path, cat_type, cat_size)
      VALUES (?, ?, ?, ?, ?) RETURNING id`,
-    [parentId, path.basename(relPath), relPath, catType, size],
+    [parentId, path.basename(key), key, catType, size],
   );
   catalogIds.set(key, row!.id);
   return row!.id;
@@ -117,57 +145,67 @@ async function addCatTree(
 // every new author (series, genre) in a whole batch of books, instead of two
 // statements per name.
 
-async function internAuthors(cx: Query, names: string[]): Promise<void> {
-  const missing = [...new Set(names.filter((n) => !authorIds.has(n)))];
-  if (!missing.length) return;
-  await cx.run(
-    `INSERT INTO authors (full_name, search_full_name, lang_code)
+interface InternSpec {
+  cache: Map<string, number>;
+  insert: string;
+  select: string;
+  /** true when the table also carries search_* / lang_code columns to fill. */
+  withLang: boolean;
+}
+
+const AUTHOR_INTERN: InternSpec = {
+  cache: authorIds,
+  insert: `INSERT INTO authors (full_name, search_full_name, lang_code)
      SELECT * FROM UNNEST($1::text[], $2::text[], $3::int[])
      ON CONFLICT (full_name) DO NOTHING`,
-    arr(missing, missing.map((n) => normalize(n)), missing.map((n) => getLangCode(n))),
-  );
-  const rows = await cx.all<{ id: number; name: string }>(
-    'SELECT id, full_name AS name FROM authors WHERE full_name = ANY($1::text[])',
-    arr(missing),
-  );
-  for (const r of rows) authorIds.set(r.name, r.id);
-}
-
-async function internSeries(cx: Query, names: string[]): Promise<void> {
-  const missing = [...new Set(names.filter((n) => !seriesIds.has(n)))];
-  if (!missing.length) return;
-  await cx.run(
-    `INSERT INTO series (ser, search_ser, lang_code)
+  select: 'SELECT id, full_name AS name FROM authors WHERE full_name = ANY($1::text[])',
+  withLang: true,
+};
+const SERIES_INTERN: InternSpec = {
+  cache: seriesIds,
+  insert: `INSERT INTO series (ser, search_ser, lang_code)
      SELECT * FROM UNNEST($1::text[], $2::text[], $3::int[])
      ON CONFLICT (ser) DO NOTHING`,
-    arr(missing, missing.map((n) => normalize(n)), missing.map((n) => getLangCode(n))),
-  );
-  const rows = await cx.all<{ id: number; name: string }>(
-    'SELECT id, ser AS name FROM series WHERE ser = ANY($1::text[])',
-    arr(missing),
-  );
-  for (const r of rows) seriesIds.set(r.name, r.id);
-}
-
-async function internGenres(cx: Query, names: string[]): Promise<void> {
-  const missing = [...new Set(names.filter((n) => !genreIds.has(n)))];
-  if (!missing.length) return;
-  await cx.run(
-    `INSERT INTO genres (genre, section, subsection)
+  select: 'SELECT id, ser AS name FROM series WHERE ser = ANY($1::text[])',
+  withLang: true,
+};
+const GENRE_INTERN: InternSpec = {
+  cache: genreIds,
+  insert: `INSERT INTO genres (genre, section, subsection)
      SELECT g, 'Unknown genre', LEFT(g, 100) FROM UNNEST($1::text[]) AS g
      ON CONFLICT (genre) DO NOTHING`,
-    arr(missing),
-  );
-  const rows = await cx.all<{ id: number; name: string }>(
-    'SELECT id, genre AS name FROM genres WHERE genre = ANY($1::text[])',
-    arr(missing),
-  );
-  for (const r of rows) genreIds.set(r.name, r.id);
+  select: 'SELECT id, genre AS name FROM genres WHERE genre = ANY($1::text[])',
+  withLang: false,
+};
+
+/** Resolve a batch of names to ids in two statements, caching the result.
+ *  Names already in `spec.cache`, and a call with nothing new, are skipped -
+ *  both are pure shortcuts over sending an empty UNNEST to Postgres. */
+async function intern(cx: Query, names: string[], spec: InternSpec): Promise<void> {
+  // Stryker disable next-line MethodExpression: re-interning a known name is a
+  // harmless ON CONFLICT DO NOTHING; the filter only saves the round trip.
+  const missing = [...new Set(names.filter((n) => !spec.cache.has(n)))];
+  // Stryker disable next-line ConditionalExpression: an empty UNNEST inserts and
+  // selects nothing, so skipping it here changes no state.
+  if (!missing.length) return;
+  const params = spec.withLang
+    ? arr(missing, missing.map((n) => normalize(n)), missing.map((n) => getLangCode(n)))
+    : arr(missing);
+  await cx.run(spec.insert, params);
+  const rows = await cx.all<{ id: number; name: string }>(spec.select, arr(missing));
+  for (const r of rows) spec.cache.set(r.name, r.id);
 }
+
+export const internAuthors = (cx: Query, names: string[]): Promise<void> =>
+  intern(cx, names, AUTHOR_INTERN);
+export const internSeries = (cx: Query, names: string[]): Promise<void> =>
+  intern(cx, names, SERIES_INTERN);
+export const internGenres = (cx: Query, names: string[]): Promise<void> =>
+  intern(cx, names, GENRE_INTERN);
 
 // ---- bulk book insert -------------------------------------------------
 
-interface PendingBook {
+export interface PendingBook {
   filename: string;
   relDir: string;
   catalogId: number;
@@ -178,11 +216,11 @@ interface PendingBook {
   loc?: ZipLocation;
 }
 
-const bookKey = (relDir: string, filename: string): string => `${relDir}\u0000${filename}`;
+export const bookKey = (relDir: string, filename: string): string => `${relDir}\u0000${filename}`;
 
 /** Insert a chunk of books and their links. Returns how many rows were
  *  genuinely new (the rest were already in the catalog). */
-async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
+export async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
   // `ON CONFLICT DO UPDATE` cannot touch the same row twice in one statement,
   // so a duplicate (path, filename) inside the chunk has to go first.
   const byKey = new Map<string, PendingBook>();
@@ -191,6 +229,8 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
     if (!byKey.has(key)) byKey.set(key, r);
   }
   const books = [...byKey.values()];
+  // Stryker disable next-line ConditionalExpression: with no books every UNNEST
+  // below is empty and the function returns 0 regardless; this is a shortcut.
   if (!books.length) return 0;
 
   await internAuthors(cx, books.flatMap((b) => b.meta.authors.map((a) => a.slice(0, 128))));
@@ -248,9 +288,13 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
   const bsNo: number[] = [];
   for (const b of books) {
     const id = idFor.get(bookKey(b.relDir, b.filename));
+    // Stryker disable next-line ConditionalExpression: every book in `books` gets
+    // a RETURNING row, so `id` is never actually undefined - this is a guard.
     if (id === undefined) continue;
     for (const a of b.meta.authors) {
       const aid = authorIds.get(a.slice(0, 128));
+      // Stryker disable next-line ConditionalExpression: `intern` just ran for
+      // every name, so `aid` is always set; a missing one would be a bug.
       if (aid !== undefined) {
         baBook.push(id);
         baAuthor.push(aid);
@@ -258,6 +302,7 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
     }
     for (const g of b.meta.genres) {
       const gid = genreIds.get(g.slice(0, 32));
+      // Stryker disable next-line ConditionalExpression: as above - `gid` is set.
       if (gid !== undefined) {
         bgBook.push(id);
         bgGenre.push(gid);
@@ -265,6 +310,7 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
     }
     if (b.meta.series) {
       const sid = seriesIds.get(b.meta.series.title.slice(0, 150));
+      // Stryker disable next-line ConditionalExpression: as above - `sid` is set.
       if (sid !== undefined) {
         bsBook.push(id);
         bsSer.push(sid);
@@ -274,24 +320,29 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
   }
   // DO NOTHING (unlike DO UPDATE) tolerates duplicates inside one statement,
   // so a book that lists the same author or genre twice needs no dedupe here.
-  if (baBook.length)
-    await cx.run(
-      `INSERT INTO book_authors (book_id, author_id)
+  const link = (sql: string, ...cols: number[][]): Promise<unknown> =>
+    // Stryker disable next-line ConditionalExpression: an empty UNNEST is a
+    // no-op; the guard only saves the round trip.
+    cols[0].length ? cx.run(sql, arr(...cols)) : Promise.resolve();
+  await link(
+    `INSERT INTO book_authors (book_id, author_id)
        SELECT * FROM UNNEST($1::int[], $2::int[]) ON CONFLICT DO NOTHING`,
-      arr(baBook, baAuthor),
-    );
-  if (bgBook.length)
-    await cx.run(
-      `INSERT INTO book_genres (book_id, genre_id)
+    baBook,
+    baAuthor,
+  );
+  await link(
+    `INSERT INTO book_genres (book_id, genre_id)
        SELECT * FROM UNNEST($1::int[], $2::int[]) ON CONFLICT DO NOTHING`,
-      arr(bgBook, bgGenre),
-    );
-  if (bsBook.length)
-    await cx.run(
-      `INSERT INTO book_series (book_id, ser_id, ser_no)
+    bgBook,
+    bgGenre,
+  );
+  await link(
+    `INSERT INTO book_series (book_id, ser_id, ser_no)
        SELECT * FROM UNNEST($1::int[], $2::int[], $3::int[]) ON CONFLICT DO NOTHING`,
-      arr(bsBook, bsSer, bsNo),
-    );
+    bsBook,
+    bsSer,
+    bsNo,
+  );
   return added;
 }
 
@@ -301,7 +352,7 @@ async function insertBooks(cx: Query, rows: PendingBook[]): Promise<number> {
 // Concurrent readers queue their statements through `enqueue()`, so only one of
 // them is inside the transaction at a time.
 
-class Writer {
+export class Writer {
   private tx: Tx | null = null;
   private lock: Promise<unknown> = Promise.resolve();
   private pending: PendingBook[] = [];
@@ -348,7 +399,11 @@ class Writer {
 
   /** Re-mark books we saw again this run as available, in bulk. */
   async markSeen(relPath: string, filenames: string[]): Promise<void> {
+    // Stryker disable next-line EqualityOperator: an extra i === length pass just
+    // runs an empty UPDATE; the loop chunks 1000 at a time either way.
     for (let i = 0; i < filenames.length; i += 1000) {
+      // Stryker disable next-line MethodExpression: the UPDATE is idempotent, so
+      // widening each chunk to the whole list only repeats work, same result.
       const slice = filenames.slice(i, i + 1000) as unknown as SqlParam;
       await this.serial((cx) =>
         cx.run('UPDATE books SET avail = 2 WHERE path = $1 AND filename = ANY($2::text[])', [
@@ -365,7 +420,9 @@ class Writer {
    * cannot be trusted even for entries whose metadata we are not re-parsing.
    */
   async markSeenAt(relPath: string, seen: { name: string; loc: ZipLocation }[]): Promise<void> {
+    // Stryker disable next-line EqualityOperator: as markSeen - an extra empty pass.
     for (let i = 0; i < seen.length; i += 1000) {
+      // Stryker disable next-line MethodExpression: as markSeen - idempotent UPDATE.
       const slice = seen.slice(i, i + 1000);
       await this.serial((cx) =>
         cx.run(
@@ -476,7 +533,7 @@ class Writer {
 // ---- reading a book's metadata header --------------------------------
 
 /** Read from disk only what this format's parser will actually look at. */
-async function readLooseForMeta(abs: string, filename: string, size: number): Promise<Buffer> {
+export async function readLooseForMeta(abs: string, filename: string, size: number): Promise<Buffer> {
   const plan = metaReadPlan(filename);
   if (plan.need === 'none') return NO_BYTES;
   if (plan.need === 'all') return fsp.readFile(abs);
@@ -493,7 +550,7 @@ async function readLooseForMeta(abs: string, filename: string, size: number): Pr
 
 /** The same, for an entry inside an archive: a head read stops the inflater
  *  early, and a format we cannot introspect is never inflated at all. */
-function readEntryForMeta(entry: ZipEntry, filename: string): Promise<Buffer> {
+export function readEntryForMeta(entry: ZipEntry, filename: string): Promise<Buffer> {
   const plan = metaReadPlan(filename);
   if (plan.need === 'none') return Promise.resolve(NO_BYTES);
   if (plan.need === 'all') return entry.read();
@@ -502,10 +559,10 @@ function readEntryForMeta(entry: ZipEntry, filename: string): Promise<Buffer> {
 
 // ---- the walk ---------------------------------------------------------
 
-type Task = { kind: 'dir'; abs: string; files: string[] } | { kind: 'zip'; abs: string };
+export type Task = { kind: 'dir'; abs: string; files: string[] } | { kind: 'zip'; abs: string };
 
 /** Yield one unit of work at a time so a huge tree is never fully listed. */
-function* tasks(dir: string): Generator<Task> {
+export function* tasks(dir: string, ctx: ScanCtx): Generator<Task> {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -513,6 +570,8 @@ function* tasks(dir: string): Generator<Task> {
     return;
   }
   const files: string[] = [];
+  // Stryker disable next-line ArrayDeclaration: a bogus seed entry recurses into
+  // a path that does not exist, which readdirSync swallows - no yielded task.
   const subdirs: string[] = [];
   for (const entry of entries) {
     if (entry.isDirectory()) {
@@ -521,17 +580,17 @@ function* tasks(dir: string): Generator<Task> {
     }
     const ext = path.extname(entry.name).toLowerCase();
     if (ext === '.zip') {
-      if (CTX.zipScan) yield { kind: 'zip', abs: path.join(dir, entry.name) };
+      if (ctx.zipScan) yield { kind: 'zip', abs: path.join(dir, entry.name) };
       continue;
     }
-    if (CTX.bookExtensions.includes(ext)) files.push(entry.name);
+    if (ctx.bookExtensions.includes(ext)) files.push(entry.name);
   }
   if (files.length) yield { kind: 'dir', abs: dir, files };
-  for (const sub of subdirs) yield* tasks(sub);
+  for (const sub of subdirs) yield* tasks(sub, ctx);
 }
 
 /** Run `fn` over the generator with at most `n` tasks in flight. */
-async function pool<T>(
+export async function pool<T>(
   items: Iterator<T>,
   n: number,
   fn: (item: T) => Promise<void>,
@@ -561,12 +620,18 @@ async function processDir(
   const relDir = path.relative(root, task.abs) || '.';
   const known = await writer.knownFilenames(relDir);
   const seen = task.files.filter((f) => known.has(f));
+  // Stryker disable next-line MethodExpression: re-reading a known file just
+  // re-runs an idempotent ON CONFLICT upsert - the filter only saves the work.
   const fresh = task.files.filter((f) => !known.has(f));
+  // Stryker disable next-line ConditionalExpression: with nothing seen the body
+  // is markSeen([]) + `+= 0` + progressed(0), all no-ops.
   if (seen.length) {
     await writer.markSeen(relDir, seen);
     stats.skipped += seen.length;
     await writer.progressed(seen.length);
   }
+  // Stryker disable next-line ConditionalExpression: with nothing fresh the rest
+  // is one idempotent addCatTree and a loop over an empty list.
   if (!fresh.length) return;
 
   const catalogId = await writer.catalog(relDir, CAT_NORMAL);
@@ -581,6 +646,8 @@ async function processDir(
         catalogId,
         catType: CAT_NORMAL,
         filesize: size,
+        // Stryker disable next-line ObjectLiteral,BooleanLiteral: metaOnly only
+        // skips cover decoding, which the scan discards anyway - same metadata.
         meta: parseBook(buf, filename, { metaOnly: true }),
       });
     } catch (err) {
@@ -594,6 +661,7 @@ async function processZip(
   writer: Writer,
   abs: string,
   root: string,
+  ctx: ScanCtx,
   stats: WalkStats,
   log: LogFn,
 ): Promise<void> {
@@ -616,7 +684,7 @@ async function processZip(
   try {
     for await (const entry of zipEntries(abs)) {
       const ext = path.extname(entry.name).toLowerCase();
-      if (!CTX.bookExtensions.includes(ext)) continue;
+      if (!ctx.bookExtensions.includes(ext)) continue;
       const loc: ZipLocation = { offset: entry.offset, csize: entry.csize, method: entry.method };
       if (known.has(entry.name)) {
         seen.push({ name: entry.name, loc });
@@ -631,6 +699,8 @@ async function processZip(
           catalogId,
           catType: CAT_ZIP,
           filesize: entry.size,
+          // Stryker disable next-line ObjectLiteral,BooleanLiteral: as above -
+          // metaOnly changes only cover decoding, which the scan ignores.
           meta: parseBook(buf, path.basename(entry.name), { metaOnly: true }),
           loc,
         });
@@ -650,6 +720,8 @@ async function processZip(
     // entries we did recognise have to stay available or the end-of-scan sweep
     // deletes them. (Ones we never reached are left pending, as before: the
     // archive keeps `cat_size = 0`, so the next run reads it again.)
+    // Stryker disable next-line ConditionalExpression: markSeenAt([]) +
+    // progressed(0) are no-ops, so the guard only skips a wasted statement.
     if (seen.length) {
       await writer.markSeenAt(relZip, seen);
       await writer.progressed(seen.length);
@@ -668,15 +740,7 @@ export async function runOnce({
   onProgress,
 }: RunOnceOpts = {}): Promise<ScanStats> {
   const rootDir = setting('rootLib');
-  CTX = {
-    bookExtensions: setting('bookExtensions')
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((e) => e.toLowerCase()),
-    zipScan: setting('zipScan'),
-    deleteMissing: setting('deleteMissing'),
-    concurrency: scanConcurrency(),
-  };
+  const ctx = buildCtx();
   if (!fs.existsSync(rootDir)) {
     log(`Book collection directory not found: ${rootDir}`);
     return {
@@ -697,24 +761,18 @@ export async function runOnce({
   // deletes the rest. Its own commit, and avail = 1 still reads as available.
   await db.run('UPDATE books SET avail = 1 WHERE avail <> 0');
 
-  // `updateCounters()` is five COUNT(*) scans, far too costly to run per batch,
-  // so publish every batch but refresh the counters on a timer. `runOnce`
-  // recounts at the end, so the numbers it leaves behind are exact.
-  let countersAt = 0;
+  const refreshCounters = makeCounterGate(updateCounters);
   const writer = new Writer(batchSize, async () => {
     stats.added = writer.added;
-    if (Date.now() - countersAt >= COUNTER_INTERVAL_MS) {
-      countersAt = Date.now();
-      await updateCounters();
-    }
+    await refreshCounters();
     log(`  ... ${writer.added} books added so far`);
     onProgress?.({ added: stats.added, skipped: stats.skipped });
   });
 
   try {
-    await pool(tasks(rootDir), CTX.concurrency, (task) =>
+    await pool(tasks(rootDir, ctx), ctx.concurrency, (task) =>
       task.kind === 'zip'
-        ? processZip(writer, task.abs, rootDir, stats, log)
+        ? processZip(writer, task.abs, rootDir, ctx, stats, log)
         : processDir(writer, task, rootDir, stats, log),
     );
     await writer.flush();
@@ -724,7 +782,7 @@ export async function runOnce({
   }
   stats.added = writer.added;
 
-  if (CTX.deleteMissing) {
+  if (ctx.deleteMissing) {
     await db.tx(async (cx) => {
       const r = await cx.run('DELETE FROM books WHERE avail <= 1');
       stats.removed = r.rowCount;
@@ -738,8 +796,8 @@ export async function runOnce({
 }
 
 /** 0 (the default) means "pick from the container's CPU allowance". */
-function scanConcurrency(): number {
-  const configured = Number(setting('scanConcurrency')) || 0;
+export function scanConcurrency(get: Setting = setting): number {
+  const configured = Number(get('scanConcurrency')) || 0;
   if (configured > 0) return Math.min(configured, 64);
   return Math.max(1, Math.min(8, os.availableParallelism?.() ?? os.cpus().length));
 }

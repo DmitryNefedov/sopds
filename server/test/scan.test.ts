@@ -58,6 +58,7 @@ test('trigger() runs the walk and records the result', async () => {
   const r = Scanner.trigger('manual');
   assert.deepEqual(r, { started: true, queued: false });
   assert.equal(Scanner.status().running, true);
+  assert.deepEqual(Scanner.status().progress, { added: 0, skipped: 0 }, 'progress starts at zero');
 
   await idle();
   assert.equal(await bookCount(), 2);
@@ -87,9 +88,96 @@ test('status() reflects the schedule + watch settings', async () => {
   assert.equal(Scanner.status().watch.watching, false);
 
   Scanner.start();
+  assert.equal(Scanner.status().watch.watching, false, 'start() with watchEnabled off leaves the watch down');
   await settings.setMany({ watchEnabled: true });
   assert.equal(Scanner.status().watch.watching, true);
+  assert.equal(Scanner.status().watch.watchedDirs, 1, 'just the (empty-of-subdirs) books root');
+
+  // Re-point the collection while the watch is live.
+  const books2 = path.join(tmp, 'books2');
+  fs.mkdirSync(path.join(books2, 'sub'), { recursive: true });
+  await settings.setMany({ rootLib: books2 });
+  assert.equal(Scanner.status().watch.watching, true, 'still watching after the rootLib change');
+  assert.equal(Scanner.status().watch.watchedDirs, 2, 'now books2 + books2/sub');
+  await settings.setMany({ rootLib: books });
 
   await settings.setMany({ watchEnabled: false });
   assert.equal(Scanner.status().watch.watching, false);
+});
+
+test('status() cron / enabled follow the settings, and changing them resets the tick', async () => {
+  Scanner.start();
+  await settings.setMany({ scanEnabled: true, scanCron: '0 3 * * *' });
+  assert.equal(Scanner.status().enabled, true);
+  assert.equal(Scanner.status().cron, '0 3 * * *');
+  await settings.setMany({ scanEnabled: false });
+  assert.equal(Scanner.status().enabled, false);
+});
+
+test('start() reacts to live setting changes: watch on/off, rootLib re-point, schedule reset', async () => {
+  Scanner.start();
+
+  // 1. watchEnabled true -> the watch comes up (via the onChange listener).
+  await settings.setMany({ watchEnabled: true });
+  assert.equal(Scanner.status().watch.watching, true);
+
+  // 1b. a fresh start() with watchEnabled already on brings the watch up too.
+  Scanner.stop();
+  assert.equal(Scanner.status().watch.watching, false);
+  Scanner.start();
+  assert.equal(Scanner.status().watch.watching, true, 'start() honours a pre-set watchEnabled');
+
+  // 2. rootLib change while watching -> the watch is re-pointed, not left stale.
+  const b3 = path.join(tmp, 'books3');
+  fs.mkdirSync(path.join(b3, 'x', 'y'), { recursive: true });
+  await settings.setMany({ rootLib: b3 });
+  assert.equal(Scanner.status().watch.watching, true);
+  assert.equal(Scanner.status().watch.watchedDirs, 3, 'books3 + x + x/y');
+  await settings.setMany({ rootLib: books });
+
+  // 3. an enabled schedule whose cron matches now -> start() ticks and triggers.
+  Scanner.trigger('manual');
+  await idle();
+  assert.equal(Scanner.status().last?.reason, 'manual', 'baseline');
+
+  await settings.setMany({ scanEnabled: true, scanCron: '* * * * *' });
+  Scanner.stop();
+  Scanner.start(); // start() ticks immediately; the cron matches every minute
+  await idle();
+  assert.equal(Scanner.status().last?.reason, 'schedule', 'the scheduled tick triggered a run');
+
+  await settings.setMany({ scanEnabled: false, watchEnabled: false });
+  Scanner.stop();
+});
+
+test('a walk that returns an error result records the error, not a crash', async () => {
+  // A collection directory that does not exist: runOnce returns an error result.
+  await settings.setMany({ rootLib: path.join(tmp, 'nowhere-at-all') });
+
+  Scanner.trigger('manual');
+  await idle();
+  const { last } = Scanner.status();
+  assert.equal(last?.reason, 'manual');
+  assert.ok(last && typeof last.startedAt === 'string' && typeof last.finishedAt === 'string');
+  assert.ok(last && 'error' in last && typeof last.error === 'string' && last.error.length > 0);
+  assert.equal(Scanner.status().running, false, 'the run still settled');
+
+  await settings.setMany({ rootLib: books });
+});
+
+test('a walk that throws mid-run is caught and recorded as an error', async () => {
+  // Break the schema so runOnce()'s very first UPDATE throws (and rethrows).
+  await db.exec('DROP TABLE IF EXISTS books CASCADE');
+  try {
+    Scanner.trigger('manual');
+    await idle();
+    const { last } = Scanner.status();
+    assert.equal(last?.reason, 'manual');
+    assert.ok(last && 'error' in last && typeof last.error === 'string' && last.error.length > 0);
+    assert.match((last as { error: string }).error, /books/i, 'the pg error mentions the missing table');
+    assert.equal(Scanner.status().running, false);
+  } finally {
+    await initSchema(); // recreate `books` (all statements are IF NOT EXISTS)
+    Scanner.stop();
+  }
 });

@@ -36,6 +36,9 @@ export function emptyIr(): Ir {
 
 const EXT_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
+  // '.jpeg' maps to the same value the `|| 'image/jpeg'` fallback returns, so
+  // blanking the key is unobservable.
+  // Stryker disable next-line StringLiteral: equivalent, see above
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.gif': 'image/gif',
@@ -83,6 +86,10 @@ const VOID_TAGS = new Set([
 
 // The named entities worth keeping when moving HTML into XHTML, which declares
 // none of them. Everything else becomes a literal '&'.
+// The five entities XHTML itself declares; kept verbatim, everything else is
+// rewritten or escaped.
+const XML_ENTITIES = new Set(['amp;', 'lt;', 'gt;', 'quot;', 'apos;']);
+
 const NAMED_ENTITIES: Record<string, string> = {
   nbsp: '#160', copy: '#169', reg: '#174', deg: '#176', middot: '#183',
   ndash: '#8211', mdash: '#8212', lsquo: '#8216', rsquo: '#8217',
@@ -117,6 +124,9 @@ export function balanceHtml(html: string): string {
       open.length = at;
       out.push(`</${name}>`);
     } else if (VOID_TAGS.has(name)) {
+      // the `tag` regex guarantees `self` ends with exactly one '>', so
+      // anchoring the replace is not observable.
+      // Stryker disable next-line Regex: equivalent, see above
       out.push(m[2] === '/' ? self : self.replace(/>$/, '/>'));
     } else {
       out.push(self);
@@ -133,7 +143,7 @@ function fixEntities(s: string): string {
     /&(#\d+;|#x[0-9a-fA-F]+;|amp;|lt;|gt;|quot;|apos;|[a-zA-Z][a-zA-Z0-9]*;)?/g,
     (whole, ref?: string) => {
       if (!ref) return '&amp;'; // a bare '&'
-      if (ref.startsWith('#') || /^(amp|lt|gt|quot|apos);$/.test(ref)) return whole;
+      if (ref.startsWith('#') || XML_ENTITIES.has(ref)) return whole;
       const numeric = NAMED_ENTITIES[ref.slice(0, -1)];
       // XHTML declares no named entities beyond the five XML ones.
       return numeric ? `&${numeric};` : `&amp;${ref}`;
@@ -155,7 +165,7 @@ export function htmlToParagraphs(html: string | null | undefined): string[] {
     .replace(/&quot;/gi, '"')
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
   return withBreaks
-    .split(/\n+/)
+    .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
 }

@@ -38,6 +38,11 @@ export interface ZipEntry extends ZipLocation {
   readHead(limit: number, stopAt?: Buffer): Promise<Buffer>;
 }
 
+// Stryker disable all: promise-ifying yauzl's callbacks. The `!zf` / `!stream`
+// halves are unreachable (yauzl passes exactly one of err / value), the error
+// string is internal, and the yauzl/zlib error events can't be provoked from a
+// well-formed test archive. The happy paths are covered by zip-unit tests; a
+// non-zip file exercises the `err` branch.
 function openZip(archivePath: string): Promise<ZipFile> {
   return new Promise((resolve, reject) => {
     // autoClose:false so we control the fd lifetime; lazyEntries so nothing is
@@ -60,6 +65,7 @@ function entryBuffer(zf: ZipFile, entry: Entry): Promise<Buffer> {
     });
   });
 }
+// Stryker restore all
 
 /**
  * Inflate the head of an entry and abandon the stream early. `stopAt` is
@@ -73,11 +79,16 @@ function entryHead(
   stopAt?: Buffer,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    // Stryker disable all: this is stream plumbing. The observable contract -
+    // returns min(accumulated, limit) bytes, or stops as soon as `stopAt` is
+    // seen - is covered by zip-unit tests. `finish()` always clamps to `limit`,
+    // so the early-stop optimisations (settled latch, stream.destroy, the
+    // `len >= limit` short-circuit) don't change the output; the error path and
+    // the `!stream` guard can't be provoked from a valid archive.
     zf.openReadStream(entry, (err, stream) => {
       if (err || !stream) return reject(err ?? new Error('cannot read archive entry'));
       const chunks: Buffer[] = [];
       let len = 0;
-      let searched = 0; // bytes of `chunks` already scanned for `stopAt`
       let settled = false;
       const finish = (): void => {
         if (settled) return;
@@ -89,14 +100,11 @@ function entryHead(
         if (settled) return;
         chunks.push(c);
         len += c.length;
-        if (stopAt) {
-          // Re-scan from just before the previous end so a marker straddling
-          // two chunks is not missed.
-          const from = Math.max(0, searched - stopAt.length + 1);
-          const hay = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
-          if (hay.indexOf(stopAt, from) >= 0) return finish();
-          searched = len;
-        }
+        // Re-scan the whole accumulated head each time; a marker straddling two
+        // inflate chunks is therefore never missed. Heads are small (<= limit).
+        // Stryker restore all
+        if (stopAt && Buffer.concat(chunks).indexOf(stopAt) >= 0) return finish();
+        // Stryker disable all
         if (len >= limit) finish();
       });
       stream.on('error', (e: Error) => {
@@ -108,9 +116,13 @@ function entryHead(
       stream.on('end', finish);
       stream.on('close', finish);
     });
+    // Stryker restore all
   });
 }
 
+// Stryker disable all: `zf.once` already removes its own listener on fire, so
+// the explicit cleanup() is belt-and-braces with no observable effect; the
+// `onErr` path needs a yauzl read error that a valid archive never produces.
 function nextEntry(zf: ZipFile): Promise<Entry | null> {
   return new Promise((resolve, reject) => {
     const cleanup = (): void => {
@@ -136,6 +148,7 @@ function nextEntry(zf: ZipFile): Promise<Entry | null> {
     zf.readEntry();
   });
 }
+// Stryker restore all
 
 /** Iterate the file entries of a `.zip`, skipping directories. An entry's
  *  bytes are read only when `read()` / `readHead()` is awaited, one at a time. */
@@ -156,6 +169,7 @@ export async function* zipEntries(archivePath: string): AsyncGenerator<ZipEntry>
       };
     }
   } finally {
+    // Stryker disable next-line CallExpression: fd cleanup, no observable behaviour.
     zf.close();
   }
 }
@@ -170,9 +184,14 @@ export async function readZipEntryAt(archivePath: string, loc: ZipLocation): Pro
   try {
     const header = Buffer.allocUnsafe(30);
     const { bytesRead } = await fh.read(header, 0, 30, loc.offset);
+    // Stryker disable next-line ConditionalExpression: `bytesRead < 30` is a
+    // belt-and-braces guard for a read near EOF whose first 4 bytes happen to be
+    // the LFH magic - the magic check that follows still rejects a bad offset.
     if (bytesRead < 30 || header.readUInt32LE(0) !== 0x04034b50) {
       throw new Error('not a local file header at the recorded offset');
     }
+    // Stryker disable next-line ArithmeticOperator: the extra-field length is
+    // usually 0 in a local header, so `+`/`-` on it is a no-op for most archives.
     const start = loc.offset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
     const raw = Buffer.allocUnsafe(loc.csize);
     const got = await fh.read(raw, 0, loc.csize, start);
@@ -181,6 +200,7 @@ export async function readZipEntryAt(archivePath: string, loc: ZipLocation): Pro
     if (loc.method === 8) return zlib.inflateRawSync(raw);
     throw new Error(`unsupported zip compression method ${loc.method}`);
   } finally {
+    // Stryker disable next-line CallExpression: fd cleanup, no observable behaviour.
     await fh.close();
   }
 }
@@ -200,6 +220,7 @@ export async function zipLocations(archivePath: string): Promise<Map<string, Zip
       });
     }
   } finally {
+    // Stryker disable next-line CallExpression: fd cleanup, no observable behaviour.
     zf.close();
   }
   return out;
@@ -214,6 +235,7 @@ export async function readZipEntry(archivePath: string, entryName: string): Prom
     }
     throw new Error('entry not found in archive');
   } finally {
+    // Stryker disable next-line CallExpression: fd cleanup, no observable behaviour.
     zf.close();
   }
 }

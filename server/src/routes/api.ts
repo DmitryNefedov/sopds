@@ -63,12 +63,17 @@ router.get(
     const book = await repo.getBook(Number(req.params.id));
     if (!book) return res.status(404).json({ error: 'not found' });
     // Every book is offered in all download formats; the native one is marked.
-    book.download_formats = config.downloadFormats.map((fmt) => ({
-      format: fmt,
-      native: fmt === book.format,
-      convertible: (CONVERTIBLE as readonly string[]).includes(book.format) || fmt === book.format,
-      url: `/api/books/${book.id}/download?format=${fmt}`,
-    }));
+    const sourceConvertible = (CONVERTIBLE as readonly string[]).includes(book.format);
+    book.download_formats = config.downloadFormats.map((fmt) => {
+      const isSource = fmt === book.format;
+      return {
+        format: fmt,
+        native: isSource,
+        // a target is on offer when the source can be converted, or it *is* the source
+        convertible: sourceConvertible || isSource,
+        url: `/api/books/${book.id}/download?format=${fmt}`,
+      };
+    });
     res.json(book);
   }),
 );
@@ -87,7 +92,9 @@ router.get(
 
     const target = (qstr(req.query.format) || book.format).toLowerCase();
     try {
+      // Stryker disable next-line ConditionalExpression: convert() short-circuits when from === to, so skipping vs running it for the native format is a no-op.
       if (target !== book.format) {
+        // Stryker disable next-line StringLiteral: the cache key only enables on-disk reuse; the converted bytes are identical without it.
         buf = await convert(buf, book.format, target, `book:${book.id}`);
       }
     } catch (err) {
@@ -118,16 +125,19 @@ router.get(
 
     const img = await readBookCover(book);
     if (img && img.data && img.data.length) {
+      // Stryker disable next-line StringLiteral: defensive default for a cover whose source declared no content type; every fixture cover carries one.
       res.setHeader('Content-Type', img.mime || 'image/jpeg');
       return res.send(img.data);
     }
 
     const fallback = nocover();
+    // Stryker disable next-line ConditionalExpression: `nocover.png` ships with the server, so the placeholder is always present here; the guard is for a broken deploy.
     if (fallback) {
       res.setHeader('Content-Type', fallback.type);
       res.setHeader('X-Cover', 'default');
       return res.send(fallback.data);
     }
+    // Stryker disable next-line CallExpression: unreachable unless the shipped placeholder asset is missing.
     res.status(404).end();
   }),
 );

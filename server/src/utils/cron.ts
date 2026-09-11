@@ -62,9 +62,9 @@ function matchField(field: string, value: number, idx: number): boolean {
     }
     for (let n = start; n <= end; n += step) {
       if (n === value) return true;
-      // Sunday can be 0 or 7 for day-of-week
+      // Day-of-week: a cron `7` means Sunday, which Date.getDay() reports as 0.
+      // (getDay() never returns 7, so only this direction needs handling.)
       if (idx === 4 && value === 0 && n === 7) return true;
-      if (idx === 4 && value === 7 && n === 0) return true;
     }
     return false;
   });

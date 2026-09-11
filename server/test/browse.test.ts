@@ -49,6 +49,13 @@ before(async () => {
   ids.beta = await book('Beta', ids.sub);
   ids.gamma = await book('Gamma', ids.sub, 2, 1);
   ids.hidden = await book('Alpha Unavailable', ids.root, 0);
+  // The withdrawn edition doubles as the fixture for annotation + zip locators:
+  // it never shows up in a listing, so loading it does not perturb any count.
+  await db.run(
+    `UPDATE books SET annotation = ?, zip_offset = 512, zip_csize = 128, zip_method = 8
+     WHERE id = ?`,
+    ['<p>An <b>annotated</b> book</p>', ids.hidden],
+  );
 
   ids.author = (await db.get<{ id: number }>(
     'INSERT INTO authors (full_name, search_full_name, lang_code) VALUES (?, ?, 2) RETURNING id',
@@ -91,6 +98,21 @@ test('getBook hydrates authors, genres and series', async () => {
 
 test('getBook returns null for an id that is not there', async () => {
   assert.equal(await repo.getBook(999_999), null);
+});
+
+test('getBook strips tags from the annotation and passes the zip locators through', async () => {
+  const zipped = await repo.getBook(ids.hidden);
+  assert.equal(zipped!.annotation, 'An annotated book', 'markup removed, text kept');
+  assert.deepEqual(
+    { o: zipped!.zip_offset, c: zipped!.zip_csize, m: zipped!.zip_method },
+    { o: 512, c: 128, m: 8 },
+  );
+
+  const loose = await repo.getBook(ids.alpha);
+  assert.equal(loose!.annotation, '', 'an empty annotation stays an empty string');
+  assert.equal(loose!.zip_offset, null, 'a book outside a zip reports null, not undefined');
+  assert.equal(loose!.zip_csize, null);
+  assert.equal(loose!.zip_method, null);
 });
 
 test('getBookRef returns only what locating the bytes needs', async () => {
@@ -148,12 +170,28 @@ test('limit is capped so a caller cannot ask for the whole catalog', async () =>
   assert.equal(page.limit, 200);
 });
 
+test('an unfiltered listing returns every available row (no prefix, no lang filter)', async () => {
+  const all = await repo.listBooks();
+  assert.deepEqual(all.items.map((b) => b.title).sort(), ['Alpha', 'Beta', 'Gamma']);
+  assert.equal(all.total, 3);
+  const same = await repo.listBooks({ prefix: '', langCode: 0 });
+  assert.equal(same.total, 3);
+  assert.equal((await repo.listAuthors()).total, 1);
+  assert.equal((await repo.listSeries()).total, 1);
+});
+
 test('listings filter by prefix and by language group', async () => {
   const prefixed = await repo.listBooks({ prefix: 'al' });
   assert.deepEqual(prefixed.items.map((b) => b.title), ['Alpha']);
+  assert.deepEqual(
+    prefixed.items[0].authors.map((a) => a.full_name),
+    ['Adams Douglas'],
+    'listBooks rows are hydrated, not raw',
+  );
 
   const cyrillic = await repo.listBooks({ langCode: 1 });
   assert.deepEqual(cyrillic.items.map((b) => b.title), ['Gamma']);
+  assert.equal((await repo.listBooks({ langCode: 2 })).total, 2, 'Latin group');
 
   const authors = await repo.listAuthors({ prefix: 'ad' });
   assert.equal(authors.items[0].book_count, 3);
@@ -174,6 +212,50 @@ test('browse starts at the synthetic "." root and walks into children', async ()
   assert.deepEqual(rootBooks.items.map((b) => b.title), ['Alpha']);
   const subBooks = await repo.booksByCatalog(ids.sub);
   assert.deepEqual(subBooks.items.map((b) => b.title), ['Beta', 'Gamma']);
+});
+
+test('a null catalog / parent id selects the "no catalog" and top-level rows', async () => {
+  // Every fixture book has a catalog, so catalog_id IS NULL matches nothing.
+  const orphans = await repo.booksByCatalog(null);
+  assert.deepEqual(orphans.items, []);
+  assert.equal(orphans.total, 0);
+
+  // parent_id IS NULL is the synthetic "." root itself.
+  const top = await repo.childCatalogs(null);
+  assert.deepEqual(top.map((c) => c.cat_name), ['.']);
+});
+
+test('booksByCatalog(null) still applies the page limit to the "no catalog" rows', async () => {
+  // Two books with no catalog at all, cleaned up after so no other count moves.
+  const mk = (t: string) =>
+    db.run(
+      `INSERT INTO books (filename, path, format, title, search_title, lang_code, catalog_id, avail)
+       VALUES (?, 'r', 'fb2', ?, ?, 2, NULL, 2)`,
+      [`${t}.fb2`, t, normalize(t)],
+    );
+  await mk('Orphan One');
+  await mk('Orphan Two');
+  try {
+    const p1 = await repo.booksByCatalog(null, { page: 1, limit: 1 });
+    assert.equal(p1.items.length, 1, 'the limit reaches the null-catalog branch');
+    assert.equal(p1.total, 2);
+    assert.equal(p1.has_next, true);
+    const p2 = await repo.booksByCatalog(null, { page: 2, limit: 1 });
+    assert.notEqual(p2.items[0].id, p1.items[0].id);
+  } finally {
+    await db.run("DELETE FROM books WHERE title LIKE 'Orphan %'");
+  }
+});
+
+test('booksByCatalog pages, and the count agrees with the rows', async () => {
+  const p1 = await repo.booksByCatalog(ids.sub, { page: 1, limit: 1 });
+  assert.equal(p1.items.length, 1);
+  assert.equal(p1.total, 2);
+  assert.equal(p1.has_next, true);
+  const p2 = await repo.booksByCatalog(ids.sub, { page: 2, limit: 1 });
+  assert.equal(p2.items.length, 1);
+  assert.equal(p2.has_prev, true);
+  assert.notEqual(p1.items[0].id, p2.items[0].id);
 });
 
 test('breadcrumbs omit the synthetic root and read parent-first', async () => {
@@ -227,10 +309,43 @@ test('pickRandomBookId only ever lands on an available row', async () => {
   }
 });
 
+test('pickRandomBookId maps the random point linearly across the id range', async () => {
+  const real = Math.random;
+  // ids.alpha/beta/gamma are the three consecutive available ids 1,2,3.
+  const [lo, mid, hi] = [ids.alpha, ids.beta, ids.gamma].sort((a, b) => a - b);
+  try {
+    Math.random = () => 0; //          point == lo
+    assert.equal(await repo.pickRandomBookId(), lo);
+    Math.random = () => 0.5; //         point == lo + floor(0.5 * 3) == lo + 1 == mid
+    assert.equal(await repo.pickRandomBookId(), mid, 'the middle of the range picks the middle id');
+    Math.random = () => 0.999999; //    point == hi
+    assert.equal(await repo.pickRandomBookId(), hi);
+  } finally {
+    Math.random = real;
+  }
+});
+
+test('pickRandomBookId returns null when there are no available books', async () => {
+  await db.run('UPDATE books SET avail = 0');
+  try {
+    assert.equal(await repo.pickRandomBookId(), null);
+  } finally {
+    await db.run('UPDATE books SET avail = 2 WHERE title <> ?', ['Alpha Unavailable']);
+  }
+});
+
 test('randomBook serves the cached id directly, with no picking involved', async () => {
   await setState('randomBookId', ids.beta);
-  const book = await repo.randomBook();
-  assert.equal(book!.id, ids.beta);
+  const real = Math.random;
+  try {
+    // A fresh pick would land on the lowest id (Alpha), never Beta - so if the
+    // returned book is Beta, the cache was used and nothing was picked.
+    Math.random = () => 0;
+    const book = await repo.randomBook();
+    assert.equal(book!.id, ids.beta);
+  } finally {
+    Math.random = real;
+  }
 });
 
 test('randomBook recovers when the cached id no longer resolves to a book', async () => {
@@ -246,4 +361,19 @@ test('refreshRandomBookId leaves a fresh, available id behind for the next call'
   const cached = getState<number>('randomBookId');
   assert.ok(cached != null, 'a real request never awaits this, but it does eventually land');
   assert.ok([ids.alpha, ids.beta, ids.gamma].includes(cached!));
+});
+
+test('refreshRandomBookId leaves the cache untouched when there is nothing to pick', async () => {
+  await db.run('UPDATE books SET avail = 0');
+  await setState('randomBookId', ids.beta);
+  try {
+    await repo.refreshRandomBookId();
+    assert.equal(
+      getState<number>('randomBookId'),
+      ids.beta,
+      'a pick that found nothing must not overwrite the id with null',
+    );
+  } finally {
+    await db.run('UPDATE books SET avail = 2 WHERE title <> ?', ['Alpha Unavailable']);
+  }
 });

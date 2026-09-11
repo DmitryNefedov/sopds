@@ -40,7 +40,7 @@ export interface Db extends Query {
 
 /** Rewrite `?` / `@name` placeholders into `$n` and order the bind values to
  *  match. Bulk statements are written in native `$n` form and pass through. */
-function translate(sql: string, params: Params | undefined): { text: string; values: unknown[] } {
+export function translate(sql: string, params: Params | undefined): { text: string; values: unknown[] } {
   if (params == null) return { text: sql, values: [] };
 
   if (Array.isArray(params)) {
@@ -66,7 +66,7 @@ function translate(sql: string, params: Params | undefined): { text: string; val
 
 /** Callers occasionally pass booleans or undefined; the schema stores 0/1
  *  integers and Postgres rejects undefined. */
-function coerce(v: SqlParam): SqlParam {
+export function coerce(v: SqlParam): SqlParam {
   if (v === undefined) return null;
   if (typeof v === 'boolean') return v ? 1 : 0;
   return v;
@@ -77,6 +77,8 @@ function makeApi(runner: RawRunner): Query {
     async query(sql, params) {
       const { text, values } = translate(sql, params);
       const r = await runner(text, values);
+      // Stryker disable next-line LogicalOperator: pg always sets rowCount and
+      // PGlite always sets affectedRows, so the `?? rows.length` tail is unreachable.
       return { rows: r.rows, rowCount: r.rowCount ?? r.affectedRows ?? r.rows.length };
     },
     async all<T = unknown>(sql: string, params?: Params) {
@@ -92,6 +94,7 @@ function makeApi(runner: RawRunner): Query {
     async run(sql, params) {
       const { text, values } = translate(sql, params);
       const r = await runner(text, values);
+      // Stryker disable next-line LogicalOperator: `?? rows.length` is unreachable (see query()).
       return { rowCount: r.rowCount ?? r.affectedRows ?? r.rows.length, rows: r.rows };
     },
     exec(sql) {
@@ -105,6 +108,9 @@ async function begin(): Promise<Tx> {
   const api = makeApi((text, values) => client.query(text, values));
   await client.query('BEGIN', []);
   let settled = false;
+  // Stryker disable ConditionalExpression,BooleanLiteral,BlockStatement,CallExpression: the
+  // "run once" latch and the release() call only matter against a real pg client
+  // (double-release throws) - PGlite's release() is a no-op, so tests can't see it.
   const finish = async (verb: 'COMMIT' | 'ROLLBACK'): Promise<void> => {
     if (settled) return;
     settled = true;
@@ -116,11 +122,14 @@ async function begin(): Promise<Tx> {
       client.release();
     }
   };
+  // Stryker restore ConditionalExpression,BooleanLiteral,BlockStatement,CallExpression
   return { ...api, commit: () => finish('COMMIT'), rollback: () => finish('ROLLBACK') };
 }
 
 const db: Db = {
   ...makeApi((text, values) => backend.query(text, values)),
+  // Stryker disable next-line ArrowFunction: process-teardown call with no
+  // observable effect inside a single test run.
   end: () => backend.end(),
   begin,
   async tx<T>(fn: (q: Query) => Promise<T>): Promise<T> {

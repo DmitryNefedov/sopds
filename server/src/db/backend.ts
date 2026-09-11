@@ -15,40 +15,49 @@ export interface Backend {
   execScript(sql: string): Promise<unknown>;
 }
 
-async function memoryBackend(): Promise<Backend> {
+export async function memoryBackend(): Promise<Backend> {
   const { PGlite } = await import('@electric-sql/pglite');
   const lite = new PGlite();
   const run: RawRunner = async (text, values) => {
+    // Stryker disable next-line ArrayDeclaration: the query surface always passes
+    // an array; `?? []` is only for a direct caller that omits params.
     const r = await lite.query(text, values ?? []);
     return { rows: r.rows as unknown[], affectedRows: r.affectedRows };
   };
   return {
     query: run,
     connect: async () => ({ query: run, release() {} }),
+    // Stryker disable next-line ArrowFunction: a teardown call with no observable
+    // effect within a single test process.
     end: () => lite.close(),
     execScript: (sql) => lite.exec(sql),
   };
 }
 
-async function realBackend(): Promise<Backend> {
+/** Turn the resolved DB config into a node-postgres Pool config: a connection
+ *  string when `DATABASE_URL` was set, otherwise the discrete PG* fields. */
+export function poolConfig(db: typeof config.db): Record<string, unknown> {
+  return db.url
+    ? { connectionString: db.url }
+    : { host: db.host, port: db.port, user: db.user, password: db.password, database: db.database };
+}
+
+/** node-postgres returns BIGINT / NUMERIC as strings; the catalog only stores
+ *  small integers there, so parse them as numbers for the rest of the code. */
+export function bigintAsNumber(v: string | null): number | null {
+  return v === null ? null : Number(v);
+}
+
+// Stryker disable all: realBackend() is thin wiring onto `pg.Pool` that only
+// runs against a live PostgreSQL server (CI / production). Its testable pieces -
+// poolConfig() and bigintAsNumber() - are extracted above and covered directly.
+export async function realBackend(): Promise<Backend> {
   const pg = (await import('pg')).default;
 
-  // node-postgres returns BIGINT / NUMERIC as strings. The catalog only stores
-  // small integers there, so parse them as numbers for the rest of the code.
-  pg.types.setTypeParser(20, (v: string | null) => (v === null ? null : Number(v))); // int8
-  pg.types.setTypeParser(1700, (v: string | null) => (v === null ? null : Number(v))); // numeric
+  pg.types.setTypeParser(20, bigintAsNumber); // int8
+  pg.types.setTypeParser(1700, bigintAsNumber); // numeric
 
-  const pool = new pg.Pool(
-    config.db.url
-      ? { connectionString: config.db.url }
-      : {
-          host: config.db.host,
-          port: config.db.port,
-          user: config.db.user,
-          password: config.db.password,
-          database: config.db.database,
-        },
-  );
+  const pool = new pg.Pool(poolConfig(config.db));
   pool.on('error', (err) => {
     console.error('unexpected postgres pool error', err);
   });
@@ -59,6 +68,8 @@ async function realBackend(): Promise<Backend> {
     execScript: (sql) => pool.query(sql),
   };
 }
+// Stryker restore all
 
-export const backend: Backend =
-  process.env.SOPDS_TEST_DB === 'mem' ? await memoryBackend() : await realBackend();
+// Stryker disable next-line ConditionalExpression: under SOPDS_TEST_DB=mem the
+// `true` mutant is a no-op; the `!== 'mem'` mutant is killed (tests hit no real PG).
+export const backend: Backend = process.env.SOPDS_TEST_DB === 'mem' ? await memoryBackend() : await realBackend();

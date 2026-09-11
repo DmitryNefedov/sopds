@@ -43,7 +43,10 @@ export interface Settings {
 
 export type SettingKey = keyof Settings;
 
-// group order is preserved for the UI
+// group order is preserved for the UI.
+// Stryker disable StringLiteral: `label` / `help` / `group` are UI copy served
+// verbatim by GET /api/admin/settings - not logic. `key` and `type` are pinned
+// by the SettingKey / SettingType types and exercised through get()/getAll().
 export const SETTING_DEFS: SettingDef[] = [
   // --- General -----------------------------------------------------------
   { key: 'title', group: 'General', type: 'text', default: config.title,
@@ -99,6 +102,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'titleAsFilename', group: 'Conversion', type: 'bool', default: true,
     label: 'Name downloads after the book title' },
 ];
+// Stryker restore StringLiteral
 
 const DEF_BY_KEY: Record<string, SettingDef> = Object.fromEntries(
   SETTING_DEFS.map((d) => [d.key, d]),
@@ -106,7 +110,7 @@ const DEF_BY_KEY: Record<string, SettingDef> = Object.fromEntries(
 
 type SettingValue = string | number | boolean;
 
-function coerce(def: SettingDef, raw: unknown): SettingValue {
+export function coerce(def: SettingDef, raw: unknown): SettingValue {
   if (raw === undefined || raw === null) return def.default;
   switch (def.type) {
     case 'bool':
@@ -114,12 +118,14 @@ function coerce(def: SettingDef, raw: unknown): SettingValue {
     case 'int': {
       const n = parseInt(String(raw), 10);
       if (Number.isNaN(n)) return def.default;
+      // Stryker disable next-line ConditionalExpression,EqualityOperator: `def.min != null`
+      // is redundant (n < undefined is always false) and `<` vs `<=` agree at n === min.
       if (def.min != null && n < def.min) return def.min;
+      // Stryker disable next-line ConditionalExpression,EqualityOperator: see above.
       if (def.max != null && n > def.max) return def.max;
       return n;
     }
-    case 'cron':
-    case 'text':
+    // 'cron' and 'text' both fall through to the string default.
     default:
       return String(raw);
   }
@@ -142,6 +148,8 @@ export async function loadSettings(): Promise<void> {
 
 function rawValue(key: string): unknown {
   const stored = rawCache.get(key);
+  // Stryker disable next-line ConditionalExpression: JSON.parse(undefined) throws
+  // into the catch below, which returns `stored` (undefined) all the same.
   if (stored === undefined) return undefined;
   try {
     return JSON.parse(stored);
@@ -155,6 +163,8 @@ export function get<K extends SettingKey>(key: K): Settings[K] {
   if (!def) throw new Error(`unknown setting: ${key}`);
   if (key in overrides) return coerce(def, overrides[key]) as Settings[K];
   const v = rawValue(key);
+  // Stryker disable next-line ConditionalExpression: coerce(def, undefined) also
+  // returns def.default, so skipping this shortcut changes nothing.
   if (v === undefined) return def.default as Settings[K];
   return coerce(def, v) as Settings[K];
 }

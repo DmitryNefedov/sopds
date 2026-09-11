@@ -43,6 +43,11 @@ before(async () => {
   const a1 = (await addAuthor('Lukyanenko Sergey'))!.id;
   const a2 = (await addAuthor('Tolstoy Leo'))!.id;
   const s1 = (await addSeries('Watch'))!.id;
+  // An author whose name contains a LIKE wildcard, to tell `=` from `LIKE` in
+  // exact mode: `= 'AXB'` misses "AcB", `LIKE 'A_B'` matches it.
+  const a3 = (await addAuthor('AcB'))!.id;
+  const b4 = (await addBook('wild.fb2', 'Wildcard Book'))!.id;
+  await db.run('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)', [b4, a3]);
 
   await db.run('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)', [b1, a1]);
   await db.run('INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)', [b2, a1]);
@@ -156,6 +161,26 @@ test('duplicate editions collapse before the page limit, not after', async () =>
     await db.run('DELETE FROM book_authors WHERE author_id = ?', [auth]);
     await db.run("DELETE FROM books WHERE title LIKE 'Zeta Alpha %'");
     await db.run('DELETE FROM authors WHERE id = ?', [auth]);
+  }
+});
+
+test('a search past the last page still reports the real total, both modes', async () => {
+  // rows come back empty past the end, so `total` falls to a standalone COUNT.
+  // With "hide doubles" on that COUNT runs the deduped CTE; with it off it runs
+  // the plain id count - exercise both.
+  const settings = await import('../src/services/settings.js');
+  try {
+    await settings.setMany({ doublesHide: true });
+    const deduped = await repo.searchBooks('watch', { page: 9, limit: 1 });
+    assert.equal(deduped.items.length, 0);
+    assert.equal(deduped.total, 2, 'the deduped fallback count sees two distinct books');
+
+    await settings.setMany({ doublesHide: false });
+    const plain = await repo.searchBooks('watch', { page: 9, limit: 1 });
+    assert.equal(plain.items.length, 0);
+    assert.equal(plain.total, 2, 'the plain fallback count sees the same two ids');
+  } finally {
+    await settings.setMany({ doublesHide: false });
   }
 });
 
@@ -283,6 +308,22 @@ test('the default match is the full substring search', async () => {
   assert.equal(implied.total, 2);
 });
 
+test('exact author/series match uses "=" so a query wildcard is a literal', async () => {
+  // "a_b" normalised is "A_B". Under LIKE, "_" matches the "c" in "AcB"; under
+  // "=" it does not. The exact pass must use "=".
+  const aWild = await repo.searchAuthors('a_b', { match: 'exact' });
+  assert.deepEqual(aWild.items, [], 'no author is literally named "A_B"');
+  assert.equal(aWild.partial, true, 'and it went through the exact/quick pass');
+  // The real name still matches exactly.
+  assert.deepEqual((await repo.searchAuthors('acb', { match: 'exact' })).items.map((a) => a.full_name), ['AcB']);
+  // Series honour the same "=" rule.
+  assert.deepEqual((await repo.searchSeries('w_tch', { match: 'exact' })).items, [], 'no series is named "W_TCH"');
+  assert.deepEqual((await repo.searchSeries('watch', { match: 'exact' })).items.map((s) => s.ser), ['Watch']);
+  // And through a book, the same distinction holds.
+  assert.deepEqual((await repo.searchBooks('a_b', { match: 'exact' })).items, []);
+  assert.deepEqual((await repo.searchBooks('acb', { match: 'exact' })).items.map((b) => b.title), ['Wildcard Book']);
+});
+
 test('authors and series honour the exact mode too', async () => {
   assert.deepEqual(
     (await repo.searchAuthors('lukyanenko sergey', { match: 'exact' })).items.map((a) => a.full_name),
@@ -296,6 +337,23 @@ test('authors and series honour the exact mode too', async () => {
     (await repo.searchSeries('watch', { match: 'exact' })).items.map((s) => s.ser),
     ['Watch'],
   );
+});
+
+test('only the exact author/series pass is flagged partial; the full pass is counted', async () => {
+  // The exact pass reports what it found (a floor); the full pass returns a real
+  // count and says nothing about being partial. The two-phase UI relies on the
+  // distinction to know which number it can trust.
+  const aExact = await repo.searchAuthors('lukyanenko sergey', { match: 'exact' });
+  assert.equal(aExact.partial, true);
+  const aFull = await repo.searchAuthors('luk', { match: 'all' });
+  assert.equal(aFull.partial, undefined, 'the counted author pass is not partial');
+
+  const sExact = await repo.searchSeries('watch', { match: 'exact' });
+  assert.equal(sExact.partial, true);
+  assert.deepEqual(sExact.items.map((s) => s.ser), ['Watch']);
+  const sFull = await repo.searchSeries('watch', { match: 'all' });
+  assert.equal(sFull.partial, undefined, 'the counted series pass is not partial');
+  assert.equal(sFull.total, 1);
 });
 
 test('LIKE wildcards in a query are matched literally, not as wildcards', async () => {
@@ -320,6 +378,13 @@ test('searchAll can run either half, and both keep the three types together', as
   const exact = await repo.searchAll('watch', { match: 'exact' });
   assert.equal(exact.series.total, 1, 'the series is named "Watch"');
   assert.equal(exact.books.total, 2, 'and its books match through it');
+  // searchAll has to forward `match` to every sub-search: the exact pass of
+  // each type is flagged partial, the full pass of each type is not.
+  assert.equal(exact.authors.partial, true, 'match:exact reaches the authors pass');
+  assert.equal(exact.series.partial, true, 'match:exact reaches the series pass');
+  assert.equal(exact.books.partial, true, 'match:exact reaches the books pass');
+  assert.equal(full.authors.partial, undefined, 'the default runs the counted authors pass');
+  assert.equal(full.series.partial, undefined, 'the default runs the counted series pass');
 
   // A query that equals nothing is reachable only by the full pass, which is
   // the case the two-phase UI exists for: the exact half comes back empty,
@@ -391,6 +456,12 @@ test('the exact pass collapses duplicate editions like the full pass', async () 
     await settings.setMany({ doublesHide: false });
     assert.equal((await repo.searchBooks('twice over', { match: 'exact' })).items.length, 2);
     assert.equal((await repo.searchBooks('twice', {})).items.length, 2);
+    // …but the exact pass still honours the page limit.
+    assert.equal(
+      (await repo.searchBooks('twice over', { match: 'exact', limit: 1 })).items.length,
+      1,
+      'the exact pass trims to the requested limit after collapsing',
+    );
   } finally {
     await settings.setMany({ doublesHide: false });
     await db.run('DELETE FROM books WHERE title = ?', [dupTitle]);

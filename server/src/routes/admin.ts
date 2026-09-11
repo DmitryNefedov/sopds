@@ -1,12 +1,45 @@
 import fs from 'node:fs';
 import { Router } from 'express';
 import { SETTING_DEFS, getAll, setMany, SettingsError } from '../services/settings.js';
+import type { SettingDef } from '../services/settings.js';
 import { Scanner } from '../services/scanner/index.js';
 import { converterInfo } from '../services/convert/index.js';
 import config from '../config/index.js';
 import { qstr } from '../utils/http.js';
 
 const router = Router();
+
+/** The UI-facing descriptor for one setting: label, type, bounds, current help. */
+export function describeSetting(d: SettingDef): {
+  key: string;
+  label: string;
+  help: string | null;
+  type: string;
+  default: unknown;
+  min: number | null;
+  max: number | null;
+} {
+  return {
+    key: d.key,
+    label: d.label,
+    help: d.help || null,
+    type: d.type,
+    default: d.default,
+    min: d.min ?? null,
+    max: d.max ?? null,
+  };
+}
+
+/** Map a settings-write failure onto an HTTP status + JSON body. */
+export function settingsErrorResponse(err: unknown): {
+  status: number;
+  body: { error: string; fields: Record<string, string> | null };
+} {
+  if (err instanceof SettingsError) {
+    return { status: err.status, body: { error: err.message, fields: err.fields } };
+  }
+  return { status: 400, body: { error: (err as Error).message, fields: null } };
+}
 
 // Optional shared-secret guard. When SOPDS_ADMIN_TOKEN is set, every admin
 // request must send it as `X-Admin-Token` (or `?token=`).
@@ -26,15 +59,7 @@ router.get('/settings', (_req, res) => {
     auth: Boolean(TOKEN),
     groups: groupOrder.map((group) => ({
       group,
-      settings: SETTING_DEFS.filter((d) => d.group === group).map((d) => ({
-        key: d.key,
-        label: d.label,
-        help: d.help || null,
-        type: d.type,
-        default: d.default,
-        min: d.min ?? null,
-        max: d.max ?? null,
-      })),
+      settings: SETTING_DEFS.filter((d) => d.group === group).map(describeSetting),
     })),
     values: getAll(),
     converter: converterInfo(),
@@ -46,11 +71,8 @@ router.put('/settings', async (req, res) => {
     const values = await setMany(req.body || {});
     res.json({ values, converter: converterInfo(), scan: Scanner.status() });
   } catch (err) {
-    if (err instanceof SettingsError) {
-      res.status(err.status).json({ error: err.message, fields: err.fields });
-    } else {
-      res.status(400).json({ error: (err as Error).message, fields: null });
-    }
+    const { status, body } = settingsErrorResponse(err);
+    res.status(status).json(body);
   }
 });
 
@@ -73,6 +95,7 @@ router.get('/scan', (_req, res) => res.json(Scanner.status()));
 router.post('/scan', (_req, res) => {
   // A first scan of a large collection runs for a long time, so start it in the
   // background and let the client poll GET /admin/scan for progress.
+  // Stryker disable next-line StringLiteral: `reason` is a log/status label only; it does not change what trigger() does or returns.
   res.json(Scanner.trigger('manual'));
 });
 

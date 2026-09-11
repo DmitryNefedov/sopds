@@ -14,7 +14,7 @@ export const LANG_MENU: Record<number, string> = {
 };
 
 export function getLangCode(s: string | null | undefined): number {
-  if (!s || s.length === 0) return 9;
+  if (!s) return 9;
   const first = s[0];
   for (const k of Object.keys(LANG_CODES)) {
     if (LANG_CODES[Number(k)].includes(first)) return Number(k);

@@ -57,6 +57,14 @@ test('run reports how many rows a statement touched', async () => {
   );
   const r = await db.run('UPDATE authors SET lang_code = ? WHERE full_name LIKE ?', [1, '%']);
   assert.equal(r.rowCount, 2);
+  const sel = await db.run('SELECT full_name FROM authors WHERE full_name LIKE ?', ['%']);
+  assert.deepEqual(new Set(sel.rows.map((x: any) => x.full_name)), new Set(['Ivan', 'Petr']));
+});
+
+test('query returns the rows and the affected-row count', async () => {
+  const r = await db.query('SELECT ?::int AS n', [5]);
+  assert.deepEqual(r.rows, [{ n: 5 }]);
+  assert.equal(typeof r.rowCount, 'number');
 });
 
 test('tx commits on success and rolls back on throw', async () => {
@@ -97,6 +105,21 @@ test('commit after rollback is a no-op rather than an error', async () => {
   const tx = await db.begin();
   await tx.rollback();
   await tx.commit();
+});
+
+test('exec runs raw SQL with no parameter translation', async () => {
+  await db.run("INSERT INTO authors (full_name, search_full_name) VALUES (?, ?)", ['Exec Target', 'EXEC TARGET']);
+  await db.exec("DELETE FROM authors WHERE full_name = 'Exec Target'");
+  assert.equal(await db.get('SELECT 1 FROM authors WHERE full_name = ?', ['Exec Target']), undefined);
+});
+
+test('realBackend builds a pg-backed Backend without connecting', async () => {
+  const { realBackend } = await import('../src/db/backend.js');
+  const b = await realBackend();
+  assert.equal(typeof b.query, 'function');
+  assert.equal(typeof b.connect, 'function');
+  assert.equal(typeof b.execScript, 'function');
+  await b.end(); // closes the (never-connected) pool
 });
 
 test('initSchema is idempotent and safe to await twice', async () => {
