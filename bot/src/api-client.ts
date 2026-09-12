@@ -105,8 +105,22 @@ export class CatalogClient {
     return (await res.json()) as BotBook;
   }
 
-  coverUrl(id: number): string {
-    return this.url(`/api/books/${id}/cover`);
+  /**
+   * Fetches a Book's cover bytes so the bot can upload them to Telegram
+   * directly, rather than handing Telegram a URL and expecting *its* servers
+   * to fetch it: `SOPDS_API_URL` is typically only reachable from the bot
+   * itself (e.g. the Docker-internal `http://api:8000`), never from
+   * Telegram's, so a URL-based `sendMediaGroup` would 400 there regardless of
+   * the book (see `bot.ts`'s `sendSearchOutcome`).
+   *
+   * Null only when the book itself is gone (404) — a book with no embedded
+   * cover still comes back 200 with the server's own placeholder image.
+   */
+  async getCoverBytes(id: number): Promise<Buffer | null> {
+    const res = await this.fetchFn(this.url(`/api/books/${id}/cover`));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`GET /api/books/${id}/cover ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
   }
 
   downloadUrl(id: number, format: string): string {

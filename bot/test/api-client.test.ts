@@ -73,8 +73,37 @@ test('a non-404 error status throws', async () => {
   await assert.rejects(() => client.getBook(5));
 });
 
-test('coverUrl and downloadUrl point at the right endpoints, base URL trailing slash stripped', () => {
+test('downloadUrl points at the right endpoint, base URL trailing slash stripped', () => {
   const client = new CatalogClient({ baseUrl: 'http://api.local/' });
-  assert.equal(client.coverUrl(7), 'http://api.local/api/books/7/cover');
   assert.equal(client.downloadUrl(7, 'epub'), 'http://api.local/api/books/7/download?format=epub');
+});
+
+test('getCoverBytes hits GET /api/books/:id/cover and returns the bytes', async () => {
+  let seen: URL | null = null;
+  const client = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async (input: string) => {
+      seen = new URL(input);
+      return new Response(Buffer.from('cover bytes'), { status: 200 });
+    }) as typeof fetch,
+  });
+  const bytes = await client.getCoverBytes(7);
+  assert.deepEqual(bytes, Buffer.from('cover bytes'));
+  assert.equal(seen!.pathname, '/api/books/7/cover');
+});
+
+test('getCoverBytes returns null on a 404 (the book itself is gone) instead of throwing', async () => {
+  const client = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async () => json({ error: 'not found' }, 404)) as typeof fetch,
+  });
+  assert.equal(await client.getCoverBytes(999), null);
+});
+
+test('getCoverBytes throws on a non-404 error status', async () => {
+  const client = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async () => json({ error: 'boom' }, 500)) as typeof fetch,
+  });
+  await assert.rejects(() => client.getCoverBytes(7));
 });

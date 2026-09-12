@@ -33,10 +33,44 @@ function isAllowed(config: BotConfig, ctx: Context): boolean {
   return false;
 }
 
-/** Sends a Search outcome: the album of covers (skipped when there are no
- *  results) followed by the one message carrying the summary and buttons. */
-async function sendSearchOutcome(ctx: Context, outcome: SearchOutcome): Promise<void> {
-  if (outcome.page.media.length) await ctx.replyWithMediaGroup(outcome.page.media);
+/**
+ * Sends a Search outcome: the album of covers (skipped when there are no
+ * results) followed by the one message carrying the summary and buttons.
+ *
+ * Covers are fetched through `api` and uploaded as bytes (`InputFile`), never
+ * handed to Telegram as a URL for *its* servers to fetch: `SOPDS_API_URL` is
+ * typically only reachable from the bot itself (e.g. the Docker-internal
+ * `http://api:8000`), and a URL-based `sendMediaGroup` 400s there regardless
+ * of the book — see `api-client.ts`'s `getCoverBytes`.
+ */
+async function sendSearchOutcome(
+  ctx: Context,
+  api: CatalogClient,
+  outcome: SearchOutcome,
+): Promise<void> {
+  if (outcome.page.media.length) {
+    const photos = await Promise.all(
+      outcome.page.media.map(async (item) => {
+        const cover = await api.getCoverBytes(item.bookId);
+        // Null only means the book vanished between the search and this send
+        // (see getCoverBytes) - drop it from the album rather than fail the
+        // whole page over one book.
+        if (!cover) return null;
+        return {
+          type: 'photo' as const,
+          media: new InputFile(cover, `cover-${item.bookId}.jpg`),
+          caption: item.caption,
+        };
+      }),
+    );
+    const found = photos.filter((p): p is NonNullable<typeof p> => p !== null);
+    // sendMediaGroup requires 2-10 items; a lone survivor goes as a plain photo.
+    if (found.length === 1) {
+      await ctx.replyWithPhoto(found[0].media, { caption: found[0].caption });
+    } else if (found.length > 1) {
+      await ctx.replyWithMediaGroup(found);
+    }
+  }
   await ctx.reply(
     outcome.page.summary,
     hasButtons(outcome.page) ? { reply_markup: outcome.page.keyboard } : undefined,
@@ -77,7 +111,7 @@ export function createBot(
   bot.command('search', async (ctx) => {
     const query = String(ctx.match ?? '').trim();
     if (!query) return ctx.reply('Usage: /search <title>');
-    await sendSearchOutcome(ctx, await runSearch(api, query));
+    await sendSearchOutcome(ctx, api, await runSearch(api, query));
   });
 
   bot.on('callback_query:data', async (ctx) => {
@@ -88,7 +122,7 @@ export function createBot(
     if (action.kind === 'more') {
       const outcome = await moreResults(api, action.token);
       if (!outcome) return ctx.reply('This search has expired — send /search again.');
-      return sendSearchOutcome(ctx, outcome);
+      return sendSearchOutcome(ctx, api, outcome);
     }
 
     if (action.kind === 'pick') {

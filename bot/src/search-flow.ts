@@ -35,10 +35,10 @@ export async function runSearch(api: CatalogClient, query: string): Promise<Sear
     result = await fetchPage(api, query, mode, 1);
   }
   if (result.items.length === 0) {
-    return { token: null, page: buildResultPage(api, result, '', mode === 'anywhere') };
+    return { token: null, page: buildResultPage(result, '', mode === 'anywhere') };
   }
   const { token } = createSession(query, mode);
-  return { token, page: buildResultPage(api, result, token, mode === 'anywhere') };
+  return { token, page: buildResultPage(result, token, mode === 'anywhere') };
 }
 
 /**
@@ -53,5 +53,5 @@ export async function moreResults(api: CatalogClient, token: string): Promise<Se
   const nextPage = session.page + 1;
   const result = await fetchPage(api, session.query, session.mode, nextPage);
   setPage(token, nextPage);
-  return { token, page: buildResultPage(api, result, token, session.mode === 'anywhere') };
+  return { token, page: buildResultPage(result, token, session.mode === 'anywhere') };
 }

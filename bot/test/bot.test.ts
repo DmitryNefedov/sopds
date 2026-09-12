@@ -38,7 +38,14 @@ const BASE_CONFIG: BotConfig = {
 
 interface Recorded {
   method: string;
+  /** Parsed JSON body - present for a plain `sendMessage`/`answerCallbackQuery` call. */
   body: Record<string, unknown>;
+  /** Raw bytes - present instead of `body` when the call carried a file
+   *  (`sendMediaGroup`/`sendPhoto`/`sendDocument` with an `InputFile`): grammY
+   *  streams those as multipart/form-data, not JSON, so this is read whole
+   *  rather than parsed - tests that care about its content search the text
+   *  (captions, file bytes) rather than JSON.parse it. */
+  raw?: Buffer;
 }
 
 function fakeTelegram() {
@@ -47,14 +54,19 @@ function fakeTelegram() {
     const url = new URL(String(input));
     const method = url.pathname.split('/').pop() ?? '';
     let body: Record<string, unknown> = {};
+    let raw: Buffer | undefined;
     if (typeof init?.body === 'string') {
       try {
         body = JSON.parse(init.body);
       } catch {
         body = {};
       }
+    } else if (init?.body && Symbol.asyncIterator in Object(init.body)) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of init.body as AsyncIterable<Uint8Array>) chunks.push(Buffer.from(chunk));
+      raw = Buffer.concat(chunks);
     }
-    calls.push({ method, body });
+    calls.push({ method, body, raw });
     const result = method === 'answerCallbackQuery' ? true : method === 'sendMediaGroup' ? [{}] : {};
     return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,
@@ -145,11 +157,23 @@ test('/search with no query replies with usage instead of searching', async () =
   assert.match(String(calls[0].body.text), /Usage/);
 });
 
-test('/search with results sends a media group then a message with pick buttons', async () => {
+/** A fake catalog API that answers `/api/books`-style search requests with
+ *  `page`, and any `/cover` request with `coverBytes` - as `getCoverBytes`
+ *  fetches them, never the URL-based `media` field this regressed to (the
+ *  bug this file's Cyrillic-title test below is guarding against). */
+function catalogWithCovers(page: BotPage<BotBook>, coverBytes = 'COVERBYTES'): typeof fetch {
+  return (async (input: string) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('/cover')) return new Response(Buffer.from(coverBytes), { status: 200 });
+    return jsonResponse(page);
+  }) as typeof fetch;
+}
+
+test('/search with results sends a media group (covers uploaded as bytes) then a message with pick buttons', async () => {
   const { calls, fetchFn } = fakeTelegram();
   const api = new CatalogClient({
     baseUrl: 'http://api.local',
-    fetchFn: (async () => jsonResponse(fullPage([book(1), book(2)]))) as typeof fetch,
+    fetchFn: catalogWithCovers(fullPage([book(1), book(2)])),
   });
   const bot = createBot(BASE_CONFIG, api, {
     botInfo: BOT_INFO,
@@ -158,13 +182,36 @@ test('/search with results sends a media group then a message with pick buttons'
   await bot.handleUpdate(messageUpdate('/search hobbit'));
 
   assert.deepEqual(calls.map((c) => c.method), ['sendMediaGroup', 'sendMessage']);
-  const media = calls[0].body.media as { media: string }[];
-  assert.equal(media.length, 2);
+  // sendMediaGroup carries a file (InputFile), so grammY streams it as
+  // multipart/form-data, not JSON - `raw` is the whole encoded body.
+  const raw = calls[0].raw!.toString('latin1');
+  assert.equal(raw.split('COVERBYTES').length - 1, 2, 'both books\' cover bytes are present');
+  assert.doesNotMatch(raw, /http:\/\/api\.local/, 'never hands Telegram a URL to fetch itself');
   const keyboard = calls[1].body.reply_markup as { inline_keyboard: { callback_data: string }[][] };
   assert.deepEqual(
     keyboard.inline_keyboard.map((row) => row[0].callback_data),
     [pickData(1), pickData(2)],
   );
+});
+
+test('a Cyrillic title (e.g. "Ночной дозор") sends fine - the regression this bug fix guards against', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: catalogWithCovers(
+      fullPage([book(1, { title: 'Ночной дозор', authors: [{ id: 1, full_name: 'Сергей Лукьяненко' }] })]),
+    ),
+  });
+  const bot = createBot(BASE_CONFIG, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/search ночной'));
+
+  // A lone result goes as a plain photo, not a 1-item media group (Telegram
+  // requires 2-10 items in a sendMediaGroup).
+  assert.deepEqual(calls.map((c) => c.method), ['sendPhoto', 'sendMessage']);
+  const raw = calls[0].raw!.toString('utf8');
+  assert.match(raw, /Ночной дозор — Сергей Лукьяненко/);
+  assert.match(raw, /COVERBYTES/);
 });
 
 test('picking a book answers the callback and offers its formats', async () => {

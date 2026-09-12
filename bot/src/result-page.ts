@@ -1,5 +1,5 @@
 import { InlineKeyboard } from 'grammy';
-import type { BotBook, BotPage, CatalogClient } from './api-client.js';
+import type { BotBook, BotPage } from './api-client.js';
 import { moreData, pickData } from './callback.js';
 
 /** Result page (CONTEXT.md "Telegram bot"): one batch of five Books, the unit
@@ -7,9 +7,13 @@ import { moreData, pickData } from './callback.js';
 export const PAGE_SIZE = 5;
 
 export interface ResultPage {
-  /** One media-group item per book, same order as the page's items. Empty
-   *  when the page has none, in which case no album is sent at all. */
-  media: { type: 'photo'; media: string; caption: string }[];
+  /** One entry per book, same order as the page's items: the id to fetch a
+   *  cover for and the caption to send it with. Deliberately not a ready
+   *  `InputMediaPhoto[]` — fetching cover bytes is async (a network call),
+   *  rendering a Result page isn't; `bot.ts`'s `sendSearchOutcome` does the
+   *  fetching. Empty when the page has none, in which case no album is sent
+   *  at all. */
+  media: { bookId: number; caption: string }[];
   /** The single message's inline keyboard: one row per book to pick it, plus
    *  a trailing "More" row when the page has a next one. Empty (no rows) when
    *  there is nothing to page or select. */
@@ -42,14 +46,12 @@ export function hasButtons(page: ResultPage): boolean {
  *   can say so instead of presenting it as a plain prefix hit.
  */
 export function buildResultPage(
-  api: CatalogClient,
   page: BotPage<BotBook>,
   token: string,
   matchedAnywhere: boolean,
 ): ResultPage {
   const media = page.items.map((book) => ({
-    type: 'photo' as const,
-    media: api.coverUrl(book.id),
+    bookId: book.id,
     caption: bookLine(book).slice(0, CAPTION_LIMIT),
   }));
 
