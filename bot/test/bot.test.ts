@@ -85,8 +85,12 @@ const book = (id: number, over: Partial<BotBook> = {}): BotBook => ({
   title: `Book ${id}`,
   format: 'fb2',
   filesize: 1,
+  lang: '',
+  annotation: '',
+  doc_date: '',
   authors: [],
   series: [],
+  genres: [],
   ...over,
 });
 
@@ -242,6 +246,31 @@ test('picking a book answers the callback and offers its formats', async () => {
     keyboard.inline_keyboard.map((row) => row[0].callback_data),
     [downloadData(5, 'fb2'), downloadData(5, 'epub'), downloadData(5, 'mobi')],
   );
+});
+
+test('picking a book replies with everything the catalog knows about it, not just the title', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async () =>
+      jsonResponse(
+        book(5, {
+          title: 'Dune',
+          authors: [{ id: 1, full_name: 'Frank Herbert' }],
+          series: [{ id: 1, ser: 'Dune', ser_no: 1 }],
+          lang: 'ru',
+          annotation: 'A desert planet, a spice, a prophecy.',
+        }),
+      )) as typeof fetch,
+  });
+  const bot = createBot(BASE_CONFIG, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+  await bot.handleUpdate(callbackUpdate(pickData(5)));
+
+  const text = String(calls[1].body.text);
+  assert.match(text, /Dune — Frank Herbert/);
+  assert.match(text, /Series: Dune #1/);
+  assert.match(text, /ru/);
+  assert.match(text, /A desert planet, a spice, a prophecy\./);
 });
 
 test('picking a book that vanished (404) reports it rather than throwing', async () => {

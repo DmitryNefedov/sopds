@@ -4,13 +4,18 @@ import { buildResultPage, hasButtons } from '../src/result-page.js';
 import type { BotBook, BotPage } from '../src/api-client.js';
 import { moreData, pickData } from '../src/callback.js';
 
-const book = (id: number, title: string, authors: string[] = []): BotBook => ({
+const book = (id: number, title: string, authors: string[] = [], over: Partial<BotBook> = {}): BotBook => ({
   id,
   title,
   format: 'fb2',
   filesize: 1,
+  lang: '',
+  annotation: '',
+  doc_date: '',
   authors: authors.map((full_name, i) => ({ id: i, full_name })),
   series: [],
+  genres: [],
+  ...over,
 });
 
 const page = (items: BotBook[], over: Partial<BotPage<BotBook>> = {}): BotPage<BotBook> => ({
@@ -57,12 +62,48 @@ test('the summary labels a title-anywhere fallback page differently from a prefi
   assert.match(anywhere.summary, /title contains/);
 });
 
-test('button label and caption include the author when present', () => {
+test('button label and caption include the author when present, both numbered by position 1', () => {
   const rp = buildResultPage(page([book(1, 'Dune', ['Frank Herbert'])]), 'tok', false);
-  assert.equal(rp.media[0].caption, 'Dune — Frank Herbert');
+  assert.equal(rp.media[0].caption, '1. Dune — Frank Herbert');
 });
 
 test('caption carries non-Latin text (e.g. Cyrillic titles) through unchanged', () => {
   const rp = buildResultPage(page([book(1, 'Ночной дозор', ['Сергей Лукьяненко'])]), 'tok', false);
-  assert.equal(rp.media[0].caption, 'Ночной дозор — Сергей Лукьяненко');
+  assert.equal(rp.media[0].caption, '1. Ночной дозор — Сергей Лукьяненко');
+});
+
+test('caption also carries series, language, and annotation, so covers alone are not the only way to tell books apart', () => {
+  const b = book(1, 'Dune', ['Frank Herbert'], {
+    series: [{ id: 1, ser: 'Dune', ser_no: 1 }],
+    lang: 'ru',
+    annotation: 'A desert planet, a spice, a prophecy.',
+  });
+  const rp = buildResultPage(page([b]), 'tok', false);
+  assert.equal(
+    rp.media[0].caption,
+    '1. Dune — Frank Herbert\nSeries: Dune #1\nLanguage: ru\n\nA desert planet, a spice, a prophecy.',
+  );
+});
+
+test('the pick button label is a numbered title/author, independent of the fuller caption', () => {
+  const b = book(1, 'Dune', ['Frank Herbert'], {
+    series: [{ id: 1, ser: 'Dune', ser_no: 1 }],
+    lang: 'ru',
+    annotation: 'A desert planet, a spice, a prophecy.',
+  });
+  const rp = buildResultPage(page([b]), 'tok', false);
+  const [[button]] = rp.keyboard.inline_keyboard;
+  assert.equal(button.text, '1. Dune — Frank Herbert');
+});
+
+test('each book on a page is numbered by its position, and the caption and pick button agree on the number', () => {
+  const rp = buildResultPage(page([book(1, 'A'), book(2, 'B'), book(3, 'C')]), 'tok', false);
+  assert.deepEqual(
+    rp.media.map((m) => m.caption),
+    ['1. A', '2. B', '3. C'],
+  );
+  assert.deepEqual(
+    rp.keyboard.inline_keyboard.map((row) => row[0].text),
+    ['1. A', '2. B', '3. C'],
+  );
 });

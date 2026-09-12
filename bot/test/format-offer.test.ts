@@ -8,8 +8,12 @@ const book = (over: Partial<BotBook>): BotBook => ({
   title: 'T',
   format: 'fb2',
   filesize: 100,
+  lang: '',
+  annotation: '',
+  doc_date: '',
   authors: [],
   series: [],
+  genres: [],
   ...over,
 });
 

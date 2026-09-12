@@ -11,8 +11,12 @@ const book = (id: number): BotBook => ({
   title: `Book ${id}`,
   format: 'fb2',
   filesize: 1,
+  lang: '',
+  annotation: '',
+  doc_date: '',
   authors: [],
   series: [],
+  genres: [],
 });
 
 const emptyPage: BotPage<BotBook> = {

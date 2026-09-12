@@ -110,7 +110,23 @@ presenting and paging Books, not about finding them.
   [ADR 0001](docs/adr/0001-title-only-prefix-search-for-the-bot.md).
 - **Result page** — one batch of five Books, sent as a single album of covers
   plus one message carrying the selection buttons. The unit the user pages
-  through: "more" means the next result page, never a longer one.
+  through: "more" means the next result page, never a longer one. Each cover
+  is numbered by its 1-based position in the page, and that same number
+  prefixes both its caption and its pick button below, so a user can match a
+  cover to its button without recounting the album — the number resets each
+  page rather than accumulating across "more" pages. Each cover's caption
+  carries more than its bare title: title, authors, series, language, and an
+  annotation snippet, so a user can tell same-titled or same-cover editions
+  apart without opening any of them — truncated to Telegram's photo caption
+  limit (1024 bytes), longest fields (the annotation) losing their tail
+  first. The pick button underneath a cover stays a numbered but otherwise
+  bare title/author, independent of the fuller caption, since it is also
+  Telegram's inline-button label (64 bytes).
+- **Book detail** — the full message a pick sends back: everything the web
+  UI's Book detail page shows for that Book (title, authors, series, genres,
+  format/size/date/language, and the *whole* annotation, not just a snippet)
+  next to its Format offer buttons, so the format choice isn't made blind on
+  a bare title.
 - **Search session** — a **Title prefix search** plus its page cursor, addressed
   by an opaque short token so a paging button can name it within the 64 bytes
   Telegram allows. Cache-shaped and deliberately not durable: a session
@@ -134,12 +150,14 @@ presenting and paging Books, not about finding them.
 
 Implementation, `bot/src/`: `search-flow.ts` runs a Title prefix search and its
 ADR-0001 fallback; `session.ts` is the Search session store; `result-page.ts`
-renders a Result page; `format-offer.ts` computes a Format offer;
-`config.ts` parses the Allowlist; `api-client.ts` is the only thing that
-speaks HTTP to the server; `bot.ts` wires all of it to grammY's commands and
-`callback_query` handling (the Allowlist check is the first middleware,
-ahead of everything else), with `callback.ts` owning the inline-button
-`callback_data` encoding.
+renders a Result page; `book-text.ts` renders a `BotBook` as text — a pick
+button's bare label, a Result page's caption, and the full Book detail
+message — so all three stay in one place instead of drifting apart;
+`format-offer.ts` computes a Format offer; `config.ts` parses the Allowlist;
+`api-client.ts` is the only thing that speaks HTTP to the server; `bot.ts`
+wires all of it to grammY's commands and `callback_query` handling (the
+Allowlist check is the first middleware, ahead of everything else), with
+`callback.ts` owning the inline-button `callback_data` encoding.
 
 ## Layout
 

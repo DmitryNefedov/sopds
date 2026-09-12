@@ -5,6 +5,7 @@ import { runSearch, moreResults, type SearchOutcome } from './search-flow.js';
 import { parseCallback, downloadData } from './callback.js';
 import { formatOffer } from './format-offer.js';
 import { hasButtons } from './result-page.js';
+import { formatBookDetails } from './book-text.js';
 
 const START_MESSAGE =
   'Send /search <title> to look up a book by its title.\n' +
@@ -133,10 +134,7 @@ export function createBot(
       for (const format of formatOffer(book)) {
         keyboard.row(InlineKeyboard.text(format.toUpperCase(), downloadData(book.id, format)));
       }
-      const authors = book.authors.map((a) => a.full_name).join(', ');
-      return ctx.reply(authors ? `${book.title}\n${authors}` : book.title, {
-        reply_markup: keyboard,
-      });
+      return ctx.reply(formatBookDetails(book), { reply_markup: keyboard });
     }
 
     // action.kind === 'download'

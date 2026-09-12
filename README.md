@@ -44,11 +44,14 @@ MOBI, PDF, DjVu, and `.zip` archives of those.
   saved per device.
 - **Telegram bot** (`bot/`) — `/search <title>` runs a **Title prefix search**
   (falling back to a title-anywhere match when the prefix finds nothing; see
-  ADR 0001), sends five books at a time as a cover album plus buttons, and
-  offers each picked book in every format it can actually be delivered in.
-  Open to anyone who finds it by default; set `TELEGRAM_ALLOWED_USERS`
-  and/or `TELEGRAM_ALLOWED_CHATS` (comma-separated Telegram numeric user /
-  group ids) to restrict it to specific people and/or groups.
+  ADR 0001), sends five books at a time as a cover album — each caption
+  carrying title, author, series, language, and an annotation snippet, not
+  just the cover — plus pick buttons. Picking one shows everything the
+  catalog knows about it (full annotation included) alongside every format it
+  can actually be delivered in. Open to anyone who finds it by default; set
+  `TELEGRAM_ALLOWED_USERS` and/or `TELEGRAM_ALLOWED_CHATS` (comma-separated
+  Telegram numeric user / group ids) to restrict it to specific people and/or
+  groups.
 
 ## Deploy with Docker Compose
 

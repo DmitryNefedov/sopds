@@ -14,6 +14,13 @@ export interface BotSeries {
   ser_no: number;
 }
 
+export interface BotGenre {
+  id: number;
+  genre: string;
+  section: string;
+  subsection: string;
+}
+
 export interface BotDownloadFormat {
   format: string;
   native: boolean;
@@ -26,8 +33,12 @@ export interface BotBook {
   title: string;
   format: string;
   filesize: number;
+  lang: string;
+  annotation: string;
+  doc_date: string;
   authors: BotAuthor[];
   series: BotSeries[];
+  genres: BotGenre[];
   /** present on GET /api/books/:id only */
   download_formats?: BotDownloadFormat[];
 }

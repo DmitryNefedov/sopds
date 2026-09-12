@@ -1,6 +1,7 @@
 import { InlineKeyboard } from 'grammy';
 import type { BotBook, BotPage } from './api-client.js';
 import { moreData, pickData } from './callback.js';
+import { bookLine, bookCaption, BUTTON_LABEL_LIMIT } from './book-text.js';
 
 /** Result page (CONTEXT.md "Telegram bot"): one batch of five Books, the unit
  *  a user pages through — "more" means the next page, never a longer one. */
@@ -8,11 +9,12 @@ export const PAGE_SIZE = 5;
 
 export interface ResultPage {
   /** One entry per book, same order as the page's items: the id to fetch a
-   *  cover for and the caption to send it with. Deliberately not a ready
-   *  `InputMediaPhoto[]` — fetching cover bytes is async (a network call),
-   *  rendering a Result page isn't; `bot.ts`'s `sendSearchOutcome` does the
-   *  fetching. Empty when the page has none, in which case no album is sent
-   *  at all. */
+   *  cover for and the `book-text.ts` caption to send it with (title, author,
+   *  series, language, and an annotation snippet — enough to choose without
+   *  opening the book). Deliberately not a ready `InputMediaPhoto[]` —
+   *  fetching cover bytes is async (a network call), rendering a Result page
+   *  isn't; `bot.ts`'s `sendSearchOutcome` does the fetching. Empty when the
+   *  page has none, in which case no album is sent at all. */
   media: { bookId: number; caption: string }[];
   /** The single message's inline keyboard: one row per book to pick it, plus
    *  a trailing "More" row when the page has a next one. Empty (no rows) when
@@ -21,16 +23,6 @@ export interface ResultPage {
   /** Plain-text summary sent alongside the keyboard. */
   summary: string;
 }
-
-function bookLine(book: BotBook): string {
-  const authors = book.authors.map((a) => a.full_name).join(', ');
-  return authors ? `${book.title} — ${authors}` : book.title;
-}
-
-/** Telegram caption limit for a photo. */
-const CAPTION_LIMIT = 1024;
-/** Comfortably under Telegram's inline button text limit. */
-const BUTTON_LABEL_LIMIT = 60;
 
 export function hasButtons(page: ResultPage): boolean {
   return page.keyboard.inline_keyboard.length > 0;
@@ -50,9 +42,12 @@ export function buildResultPage(
   token: string,
   matchedAnywhere: boolean,
 ): ResultPage {
-  const media = page.items.map((book) => ({
+  // Both the caption and the pick button below it are numbered by the book's
+  // 1-based position in this page (never a global rank across pages), so the
+  // two always agree on what "1", "2", ... refers to.
+  const media = page.items.map((book, i) => ({
     bookId: book.id,
-    caption: bookLine(book).slice(0, CAPTION_LIMIT),
+    caption: bookCaption(book, i + 1),
   }));
 
   // `new InlineKeyboard()` (no args) starts pre-seeded with one empty row, and
@@ -61,9 +56,11 @@ export function buildResultPage(
   // explicit `[]` start plus one `row()` call per button is exactly one row
   // per button, no more.
   const keyboard = new InlineKeyboard([]);
-  for (const book of page.items) {
-    keyboard.row(InlineKeyboard.text(bookLine(book).slice(0, BUTTON_LABEL_LIMIT), pickData(book.id)));
-  }
+  page.items.forEach((book, i) => {
+    keyboard.row(
+      InlineKeyboard.text(bookLine(book, i + 1).slice(0, BUTTON_LABEL_LIMIT), pickData(book.id)),
+    );
+  });
   if (page.has_next) keyboard.row(InlineKeyboard.text('More ▸', moreData(token)));
 
   const summary = summaryFor(page, matchedAnywhere);
