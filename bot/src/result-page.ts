@@ -8,13 +8,15 @@ import { bookLine, bookCaption, BUTTON_LABEL_LIMIT } from './book-text.js';
 export const PAGE_SIZE = 5;
 
 export interface ResultPage {
-  /** One entry per book, same order as the page's items: the id to fetch a
-   *  cover for and the `book-text.ts` caption to send it with (title, author,
-   *  series, language, and an annotation snippet — enough to choose without
-   *  opening the book). Deliberately not a ready `InputMediaPhoto[]` —
-   *  fetching cover bytes is async (a network call), rendering a Result page
-   *  isn't; `bot.ts`'s `sendSearchOutcome` does the fetching. Empty when the
-   *  page has none, in which case no album is sent at all. */
+  /** One entry per book, same order as the page's items, each sent as its own
+   *  photo+caption message (not a `sendMediaGroup` album — see
+   *  `bot.ts`'s `sendSearchOutcome` for why): the id to fetch a cover for and
+   *  the `book-text.ts` caption to send it with (title, author, series,
+   *  language, and an annotation snippet — enough to choose without opening
+   *  the book). Deliberately not a ready set of `InputFile`s — fetching cover
+   *  bytes is async (a network call), rendering a Result page isn't; that
+   *  fetching is `sendSearchOutcome`'s job. Empty when the page has none, in
+   *  which case nothing is sent but the summary. */
   media: { bookId: number; caption: string }[];
   /** The single message's inline keyboard: one row per book to pick it, plus
    *  a trailing "More" row when the page has a next one. Empty (no rows) when

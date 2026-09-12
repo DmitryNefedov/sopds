@@ -121,8 +121,8 @@ export class CatalogClient {
    * directly, rather than handing Telegram a URL and expecting *its* servers
    * to fetch it: `SOPDS_API_URL` is typically only reachable from the bot
    * itself (e.g. the Docker-internal `http://api:8000`), never from
-   * Telegram's, so a URL-based `sendMediaGroup` would 400 there regardless of
-   * the book (see `bot.ts`'s `sendSearchOutcome`).
+   * Telegram's, so a URL-based `sendPhoto` would 400 there regardless of the
+   * book (see `bot.ts`'s `sendSearchOutcome`).
    *
    * Null only when the book itself is gone (404) — a book with no embedded
    * cover still comes back 200 with the server's own placeholder image.

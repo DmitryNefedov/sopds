@@ -35,14 +35,21 @@ function isAllowed(config: BotConfig, ctx: Context): boolean {
 }
 
 /**
- * Sends a Search outcome: the album of covers (skipped when there are no
- * results) followed by the one message carrying the summary and buttons.
+ * Sends a Search outcome: one photo+caption message per book (skipped when
+ * there are no results), followed by the one message carrying the summary
+ * and buttons.
+ *
+ * Deliberately *not* `sendMediaGroup`: Telegram only surfaces an album's
+ * per-photo captions once a user taps into one, showing none of them in the
+ * collapsed grid the chat feed renders by default — a caption meant to help
+ * someone choose a book has to be visible without that extra tap, so each
+ * book gets its own message instead.
  *
  * Covers are fetched through `api` and uploaded as bytes (`InputFile`), never
  * handed to Telegram as a URL for *its* servers to fetch: `SOPDS_API_URL` is
  * typically only reachable from the bot itself (e.g. the Docker-internal
- * `http://api:8000`), and a URL-based `sendMediaGroup` 400s there regardless
- * of the book — see `api-client.ts`'s `getCoverBytes`.
+ * `http://api:8000`), and a URL-based `sendPhoto` 400s there regardless of the
+ * book — see `api-client.ts`'s `getCoverBytes`.
  */
 async function sendSearchOutcome(
   ctx: Context,
@@ -54,22 +61,20 @@ async function sendSearchOutcome(
       outcome.page.media.map(async (item) => {
         const cover = await api.getCoverBytes(item.bookId);
         // Null only means the book vanished between the search and this send
-        // (see getCoverBytes) - drop it from the album rather than fail the
+        // (see getCoverBytes) - drop it from the results rather than fail the
         // whole page over one book.
         if (!cover) return null;
-        return {
-          type: 'photo' as const,
-          media: new InputFile(cover, `cover-${item.bookId}.jpg`),
-          caption: item.caption,
-        };
+        return { bookId: item.bookId, cover, caption: item.caption };
       }),
     );
-    const found = photos.filter((p): p is NonNullable<typeof p> => p !== null);
-    // sendMediaGroup requires 2-10 items; a lone survivor goes as a plain photo.
-    if (found.length === 1) {
-      await ctx.replyWithPhoto(found[0].media, { caption: found[0].caption });
-    } else if (found.length > 1) {
-      await ctx.replyWithMediaGroup(found);
+    // Sent one at a time, in order, rather than in parallel: nothing here
+    // requires the speed, and a Telegram chat has no ordering guarantee
+    // beyond the order the sends themselves arrive in.
+    for (const photo of photos) {
+      if (!photo) continue;
+      await ctx.replyWithPhoto(new InputFile(photo.cover, `cover-${photo.bookId}.jpg`), {
+        caption: photo.caption,
+      });
     }
   }
   await ctx.reply(

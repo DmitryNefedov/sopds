@@ -173,7 +173,7 @@ function catalogWithCovers(page: BotPage<BotBook>, coverBytes = 'COVERBYTES'): t
   }) as typeof fetch;
 }
 
-test('/search with results sends a media group (covers uploaded as bytes) then a message with pick buttons', async () => {
+test('/search with results sends one photo+caption message per book (covers uploaded as bytes), then a message with pick buttons', async () => {
   const { calls, fetchFn } = fakeTelegram();
   const api = new CatalogClient({
     baseUrl: 'http://api.local',
@@ -185,13 +185,20 @@ test('/search with results sends a media group (covers uploaded as bytes) then a
   });
   await bot.handleUpdate(messageUpdate('/search hobbit'));
 
-  assert.deepEqual(calls.map((c) => c.method), ['sendMediaGroup', 'sendMessage']);
-  // sendMediaGroup carries a file (InputFile), so grammY streams it as
+  // Not a sendMediaGroup - each book is its own message, so its caption is
+  // visible without tapping into the photo first.
+  assert.deepEqual(calls.map((c) => c.method), ['sendPhoto', 'sendPhoto', 'sendMessage']);
+  // sendPhoto carries a file (InputFile), so grammY streams it as
   // multipart/form-data, not JSON - `raw` is the whole encoded body.
-  const raw = calls[0].raw!.toString('latin1');
-  assert.equal(raw.split('COVERBYTES').length - 1, 2, 'both books\' cover bytes are present');
-  assert.doesNotMatch(raw, /http:\/\/api\.local/, 'never hands Telegram a URL to fetch itself');
-  const keyboard = calls[1].body.reply_markup as { inline_keyboard: { callback_data: string }[][] };
+  const rawPhotos = calls.slice(0, 2).map((c) => c.raw!.toString('latin1'));
+  assert.ok(rawPhotos.every((raw) => raw.includes('COVERBYTES')), "both books' cover bytes are present");
+  assert.match(rawPhotos[0], /1\. Book 1/, "first message's caption is numbered 1");
+  assert.match(rawPhotos[1], /2\. Book 2/, "second message's caption is numbered 2, matching its pick button");
+  assert.ok(
+    rawPhotos.every((raw) => !/http:\/\/api\.local/.test(raw)),
+    'never hands Telegram a URL to fetch itself',
+  );
+  const keyboard = calls[2].body.reply_markup as { inline_keyboard: { callback_data: string }[][] };
   assert.deepEqual(
     keyboard.inline_keyboard.map((row) => row[0].callback_data),
     [pickData(1), pickData(2)],
@@ -210,8 +217,6 @@ test('a Cyrillic title (e.g. "Ночной дозор") sends fine - the regress
 
   await bot.handleUpdate(messageUpdate('/search ночной'));
 
-  // A lone result goes as a plain photo, not a 1-item media group (Telegram
-  // requires 2-10 items in a sendMediaGroup).
   assert.deepEqual(calls.map((c) => c.method), ['sendPhoto', 'sendMessage']);
   const raw = calls[0].raw!.toString('utf8');
   assert.match(raw, /Ночной дозор — Сергей Лукьяненко/);

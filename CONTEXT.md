@@ -108,19 +108,24 @@ presenting and paging Books, not about finding them.
   query with Books whose titles contain none of it. The cost is that a word
   from the middle of a title does not match; see
   [ADR 0001](docs/adr/0001-title-only-prefix-search-for-the-bot.md).
-- **Result page** — one batch of five Books, sent as a single album of covers
-  plus one message carrying the selection buttons. The unit the user pages
-  through: "more" means the next result page, never a longer one. Each cover
-  is numbered by its 1-based position in the page, and that same number
-  prefixes both its caption and its pick button below, so a user can match a
-  cover to its button without recounting the album — the number resets each
-  page rather than accumulating across "more" pages. Each cover's caption
-  carries more than its bare title: title, authors, series, language, and an
-  annotation snippet, so a user can tell same-titled or same-cover editions
-  apart without opening any of them — truncated to Telegram's photo caption
-  limit (1024 bytes), longest fields (the annotation) losing their tail
-  first. The pick button underneath a cover stays a numbered but otherwise
-  bare title/author, independent of the fuller caption, since it is also
+- **Result page** — one batch of five Books, each sent as its own
+  photo+caption message, followed by one further message carrying the
+  summary and selection buttons. The unit the user pages through: "more"
+  means the next result page, never a longer one. Deliberately not a
+  `sendMediaGroup` album: Telegram only surfaces an album's per-photo
+  captions once a user taps into one, showing none of them in the collapsed
+  grid the chat feed renders by default, which defeats the point of putting
+  anything in the caption at all. Each cover is numbered by its 1-based
+  position in the page, and that same number prefixes both its caption and
+  its pick button in the summary message, so a user can match a cover to its
+  button without recounting — the number resets each page rather than
+  accumulating across "more" pages. Each cover's caption carries more than
+  its bare title: title, authors, series, language, and an annotation
+  snippet, so a user can tell same-titled or same-cover editions apart
+  without opening any of them — truncated to Telegram's photo caption limit
+  (1024 bytes), longest fields (the annotation) losing their tail first. The
+  pick button in the summary message stays a numbered but otherwise bare
+  title/author, independent of the fuller caption, since it is also
   Telegram's inline-button label (64 bytes).
 - **Book detail** — the full message a pick sends back: everything the web
   UI's Book detail page shows for that Book (title, authors, series, genres,
