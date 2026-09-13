@@ -1,7 +1,5 @@
-// Thin HTTP client for the SOPDS catalog API. The bot is a catalog *client*,
-// not a second catalog (see CONTEXT.md "Telegram bot"): every search and
-// download below goes through the same endpoints an OPDS reader would use, and
-// this module owns no schema of its own — just enough shape to render results.
+// Thin HTTP client for the SOPDS catalog API — the bot is a client, not a
+// second catalog, and owns no schema of its own (see CONTEXT.md "Telegram bot").
 
 export interface BotAuthor {
   id: number;
@@ -58,19 +56,28 @@ function emptyPage<T>(limit: number): BotPage<T> {
   return { items: [], total: 0, page: 1, limit, pages: 1, has_next: false, has_prev: false };
 }
 
+/** Per-call timeout: bounds how long a hung request can stall the bot, since
+ *  grammY processes updates sequentially by default. See `bot.ts`'s `withCatalog`. */
+export const CATALOG_TIMEOUT_MS = 10_000;
+
 export interface CatalogClientOpts {
   baseUrl: string;
   /** Injectable for tests; defaults to the global `fetch`. */
   fetchFn?: typeof fetch;
+  /** Per-call timeout; defaults to `CATALOG_TIMEOUT_MS`. Shortened in tests
+   *  that exercise the timeout itself. */
+  timeoutMs?: number;
 }
 
 export class CatalogClient {
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
-  constructor({ baseUrl, fetchFn = fetch }: CatalogClientOpts) {
+  constructor({ baseUrl, fetchFn = fetch, timeoutMs = CATALOG_TIMEOUT_MS }: CatalogClientOpts) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.fetchFn = fetchFn;
+    this.timeoutMs = timeoutMs;
   }
 
   private url(path: string, params: Record<string, string | number | undefined> = {}): string {
@@ -81,25 +88,24 @@ export class CatalogClient {
     return u.toString();
   }
 
-  /**
-   * Title prefix search — the bot's only search: `GET /api/books?prefix=`,
-   * i.e. `catalog.listBooks`'s prefix mode. See ADR 0001 for why this, and
-   * not unified search, is what `/search` runs.
-   */
+  /** Every request goes through here, not `fetchFn` directly, so one shared
+   *  timeout covers every catalog call. */
+  private request(url: string): Promise<Response> {
+    return this.fetchFn(url, { signal: AbortSignal.timeout(this.timeoutMs) });
+  }
+
+  /** Title prefix search — the bot's only search (`GET /api/books?prefix=`).
+   *  See ADR 0001 for why not Unified search. */
   async titlePrefixSearch(prefix: string, page: number, limit: number): Promise<BotPage<BotBook>> {
-    const res = await this.fetchFn(this.url('/api/books', { prefix, page, limit }));
+    const res = await this.request(this.url('/api/books', { prefix, page, limit }));
     if (!res.ok) throw new Error(`GET /api/books ${res.status}`);
     return (await res.json()) as BotPage<BotBook>;
   }
 
-  /**
-   * The ADR 0001 fallback: when the prefix search finds nothing, retry with a
-   * substring match still scoped to `type=books` (title/author/series union),
-   * which the caller labels as "matched anywhere" rather than presenting
-   * silently as a prefix hit.
-   */
+  /** The ADR 0001 fallback: retries as a substring match (`type=books`) when
+   *  the prefix search finds nothing; the caller labels this "matched anywhere". */
   async titleAnywhereSearch(query: string, page: number, limit: number): Promise<BotPage<BotBook>> {
-    const res = await this.fetchFn(
+    const res = await this.request(
       this.url('/api/search', { q: query, type: 'books', match: 'all', page, limit }),
     );
     if (!res.ok) throw new Error(`GET /api/search ${res.status}`);
@@ -110,25 +116,16 @@ export class CatalogClient {
   /** Null on a 404 (book gone since the search ran) rather than a thrown error,
    *  so callers can report it plainly instead of treating it as a fault. */
   async getBook(id: number): Promise<BotBook | null> {
-    const res = await this.fetchFn(this.url(`/api/books/${id}`));
+    const res = await this.request(this.url(`/api/books/${id}`));
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`GET /api/books/${id} ${res.status}`);
     return (await res.json()) as BotBook;
   }
 
-  /**
-   * Fetches a Book's cover bytes so the bot can upload them to Telegram
-   * directly, rather than handing Telegram a URL and expecting *its* servers
-   * to fetch it: `SOPDS_API_URL` is typically only reachable from the bot
-   * itself (e.g. the Docker-internal `http://api:8000`), never from
-   * Telegram's, so a URL-based `sendPhoto` would 400 there regardless of the
-   * book (see `bot.ts`'s `sendSearchOutcome`).
-   *
-   * Null only when the book itself is gone (404) — a book with no embedded
-   * cover still comes back 200 with the server's own placeholder image.
-   */
+  /** Cover bytes to upload directly — a URL-based `sendPhoto` would fail since
+   *  Telegram can't reach `SOPDS_API_URL`. Null only when the book itself is gone (404). */
   async getCoverBytes(id: number): Promise<Buffer | null> {
-    const res = await this.fetchFn(this.url(`/api/books/${id}/cover`));
+    const res = await this.request(this.url(`/api/books/${id}/cover`));
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`GET /api/books/${id}/cover ${res.status}`);
     return Buffer.from(await res.arrayBuffer());

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CatalogClient } from '../src/api-client.js';
+import { CatalogClient } from '../src/catalog/api-client.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -106,4 +106,34 @@ test('getCoverBytes throws on a non-404 error status', async () => {
     fetchFn: (async () => json({ error: 'boom' }, 500)) as typeof fetch,
   });
   await assert.rejects(() => client.getCoverBytes(7));
+});
+
+// ---- timeout (every request goes through `request`, not `fetchFn` directly) ----
+
+test('every request carries an abort signal, not just the raw fetchFn call', async () => {
+  let seenSignal: AbortSignal | undefined;
+  const client = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async (_input: string, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return json({ id: 1 });
+    }) as typeof fetch,
+  });
+  await client.getBook(1);
+  assert.ok(seenSignal instanceof AbortSignal, 'a signal was passed through to fetchFn');
+  assert.equal(seenSignal!.aborted, false, 'not aborted before the timeout elapses');
+});
+
+test('a request that outlives its timeout rejects instead of hanging forever', async () => {
+  // Mirrors what the real `fetch` does when its signal fires: a hand-rolled
+  // fake has to be told to reject on abort, since nothing does that for it.
+  const client = new CatalogClient({
+    baseUrl: 'http://api.local',
+    timeoutMs: 10,
+    fetchFn: ((_input: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('timed out')));
+      })) as typeof fetch,
+  });
+  await assert.rejects(() => client.getBook(1));
 });

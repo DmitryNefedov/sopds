@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildResultPage, hasButtons } from '../src/result-page.js';
-import type { BotBook, BotPage } from '../src/api-client.js';
-import { moreData, pickData } from '../src/callback.js';
+import { buildResultPage, hasButtons } from '../src/telegram/result-page.js';
+import type { BotBook, BotPage } from '../src/catalog/api-client.js';
+import { moreData, pickData } from '../src/telegram/callback.js';
 
 const book = (id: number, title: string, authors: string[] = [], over: Partial<BotBook> = {}): BotBook => ({
   id,

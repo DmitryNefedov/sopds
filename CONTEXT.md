@@ -152,17 +152,30 @@ presenting and paging Books, not about finding them.
   with, so this pair is the only access control the bot has. A sender outside
   both gets a plain refusal (or a callback alert) before any other handler
   runs, never a silent drop.
+- **Catalog timeout** — every `CatalogClient` request carries the same
+  `CATALOG_TIMEOUT_MS` (10s) abort budget, so a hung SOPDS API fails one
+  request rather than hanging it forever. This matters because grammY's
+  default `bot.start()` processes updates one at a time: without a bound, one
+  stuck request would queue every other chat's update behind it, not just the
+  one that triggered it. `withCatalog` (in `bot.ts`) is the other half — it
+  wraps every catalog call a handler makes and replies with one plain message
+  on any failure a typed `null` doesn't already cover (a timeout, a network
+  error, a non-2xx status), so a failure ends in a reply instead of vanishing
+  into `bot.catch`'s bare `console.error`.
 
-Implementation, `bot/src/`: `search-flow.ts` runs a Title prefix search and its
-ADR-0001 fallback; `session.ts` is the Search session store; `result-page.ts`
-renders a Result page; `book-text.ts` renders a `BotBook` as text — a pick
-button's bare label, a Result page's caption, and the full Book detail
+Implementation, `bot/src/` (see "Layout" below for how the directory is
+grouped): `search/search-flow.ts` runs a Title prefix search and its ADR-0001
+fallback; `search/session.ts` is the Search session store; `telegram/result-page.ts`
+renders a Result page; `telegram/book-text.ts` renders a `BotBook` as text — a
+pick button's bare label, a Result page's caption, and the full Book detail
 message — so all three stay in one place instead of drifting apart;
-`format-offer.ts` computes a Format offer; `config.ts` parses the Allowlist;
-`api-client.ts` is the only thing that speaks HTTP to the server; `bot.ts`
-wires all of it to grammY's commands and `callback_query` handling (the
-Allowlist check is the first middleware, ahead of everything else), with
-`callback.ts` owning the inline-button `callback_data` encoding.
+`telegram/format-offer.ts` computes a Format offer; `config.ts` parses the
+Allowlist; `catalog/api-client.ts` is the only thing that speaks HTTP to the
+server, and gives every request it makes the same Catalog timeout;
+`telegram/bot.ts` wires all of it to grammY's commands and `callback_query`
+handling (the Allowlist check is the first middleware, ahead of everything
+else; `withCatalog` wraps every catalog call a handler makes), with
+`telegram/callback.ts` owning the inline-button `callback_data` encoding.
 
 ## Layout
 
@@ -178,8 +191,17 @@ Allowlist check is the first middleware, ahead of everything else), with
 | `routes/`     | Express routers: `api`, `opds`, `admin`, `debug`               |
 | `utils/`      | leaves with no domain knowledge: `http`, `lang`, `cron`, `download` |
 
-`bot/src/` is flat — small enough that grouping by role would just be one file
-per folder. See "Telegram bot" above for what each file owns.
+`bot/src/` is grouped the same way, by the seam each file sits at rather than
+alphabetically:
+
+| directory   | holds                                                                 |
+| ----------- | ---------------------------------------------------------------------- |
+| `catalog/`  | `api-client.ts` — the only thing that speaks HTTP to the server         |
+| `search/`   | `search-flow.ts`, `session.ts` — Title prefix search and its Search session |
+| `telegram/` | `bot.ts`, `callback.ts`, `result-page.ts`, `book-text.ts`, `format-offer.ts` — rendering and wiring for Telegram itself |
+
+`config.ts` and `index.ts` stay at the top of `bot/src/`: wiring, not a seam of
+their own. See "Telegram bot" above for what each file owns.
 
 `app.ts` assembles the Express app; `index.ts` is the process entry point that
 opens the port and starts the Scanner. Dependencies point inward — `routes` use

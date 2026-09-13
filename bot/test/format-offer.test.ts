@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatOffer } from '../src/format-offer.js';
-import type { BotBook } from '../src/api-client.js';
+import { formatOffer } from '../src/telegram/format-offer.js';
+import type { BotBook } from '../src/catalog/api-client.js';
 
 const book = (over: Partial<BotBook>): BotBook => ({
   id: 1,

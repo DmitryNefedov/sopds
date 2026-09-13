@@ -1,6 +1,6 @@
-import type { CatalogClient, BotPage, BotBook } from './api-client.js';
+import type { CatalogClient, BotPage, BotBook } from '../catalog/api-client.js';
 import { createSession, getSession, setPage, type SearchMode } from './session.js';
-import { PAGE_SIZE, buildResultPage, type ResultPage } from './result-page.js';
+import { PAGE_SIZE, buildResultPage, type ResultPage } from '../telegram/result-page.js';
 
 export interface SearchOutcome {
   /** Null when the search (including the fallback) found nothing — there is
@@ -20,13 +20,8 @@ function fetchPage(
     : api.titleAnywhereSearch(query, page, PAGE_SIZE);
 }
 
-/**
- * Runs a Title prefix search for `/search <query>`. Per ADR 0001, when that
- * comes back empty it retries as the title-anywhere fallback and labels the
- * result as having matched anywhere rather than presenting a silent prefix
- * hit. Either way that starts a fresh Search session, unless both passes
- * found nothing, in which case there is nothing to page.
- */
+/** Title prefix search for `/search <query>`, falling back to the ADR-0001
+ *  title-anywhere search when that's empty. Starts a Search session unless both are. */
 export async function runSearch(api: CatalogClient, query: string): Promise<SearchOutcome> {
   let mode: SearchMode = 'prefix';
   let result = await fetchPage(api, query, mode, 1);
@@ -41,12 +36,8 @@ export async function runSearch(api: CatalogClient, query: string): Promise<Sear
   return { token, page: buildResultPage(result, token, mode === 'anywhere') };
 }
 
-/**
- * Advances a Search session to its next Result page ("more" never means a
- * longer page, only the next one). Null when the session is gone — expired,
- * evicted, or from before a restart — for the caller to report as expired
- * rather than guess at.
- */
+/** Advances a Search session to its next Result page ("more" means the next
+ *  page, never a longer one). Null when the session is gone — reported as expired. */
 export async function moreResults(api: CatalogClient, token: string): Promise<SearchOutcome | null> {
   const session = getSession(token);
   if (!session) return null;

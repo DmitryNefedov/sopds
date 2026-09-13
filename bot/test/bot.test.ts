@@ -1,17 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { UserFromGetMe, Update } from '@grammyjs/types';
-import { createBot } from '../src/bot.js';
+import { createBot } from '../src/telegram/bot.js';
 import type { BotConfig } from '../src/config.js';
-import { CatalogClient } from '../src/api-client.js';
-import type { BotBook, BotPage } from '../src/api-client.js';
-import { clearAllSessions } from '../src/session.js';
-import { pickData, downloadData, moreData } from '../src/callback.js';
+import { CatalogClient } from '../src/catalog/api-client.js';
+import type { BotBook, BotPage } from '../src/catalog/api-client.js';
+import { clearAllSessions, createSession } from '../src/search/session.js';
+import { pickData, downloadData, moreData } from '../src/telegram/callback.js';
 
-// Exercises the whole handler wiring end to end (an update in, the Telegram
-// Bot API calls it provokes out), without a real bot token or network: the
-// grammY client's `fetch` is swapped for a fake that plays Telegram's side,
-// and `botInfo` is supplied directly so the bot skips the real `getMe`.
+// Exercises the whole handler wiring end to end without a real bot token or
+// network: grammY's fetch is faked and botInfo supplied to skip getMe.
 
 const BOT_INFO: UserFromGetMe = {
   id: 1,
@@ -40,11 +38,8 @@ interface Recorded {
   method: string;
   /** Parsed JSON body - present for a plain `sendMessage`/`answerCallbackQuery` call. */
   body: Record<string, unknown>;
-  /** Raw bytes - present instead of `body` when the call carried a file
-   *  (`sendMediaGroup`/`sendPhoto`/`sendDocument` with an `InputFile`): grammY
-   *  streams those as multipart/form-data, not JSON, so this is read whole
-   *  rather than parsed - tests that care about its content search the text
-   *  (captions, file bytes) rather than JSON.parse it. */
+  /** Raw bytes for a call carrying a file (grammY streams multipart, not
+   *  JSON) - tests search the text instead of JSON.parse-ing it. */
   raw?: Buffer;
 }
 
@@ -98,9 +93,8 @@ function fullPage(items: BotBook[]): BotPage<BotBook> {
   return { items, total: items.length, page: 1, limit: 5, pages: 1, has_next: false, has_prev: false };
 }
 
-/** Defaults to a private chat, where Telegram's chat id equals the sender's
- *  user id; pass `chatId` to place the sender inside a group instead (group
- *  chat ids are negative and distinct from any member's user id). */
+/** Defaults to a private chat (chat id = sender id); pass `chatId` for a
+ *  group instead (negative, distinct from any member's id). */
 function messageUpdate(text: string, userId = 100, chatId = userId): Update {
   const commandLength = text.startsWith('/') ? text.split(' ')[0].length : 0;
   return {
@@ -161,10 +155,8 @@ test('/search with no query replies with usage instead of searching', async () =
   assert.match(String(calls[0].body.text), /Usage/);
 });
 
-/** A fake catalog API that answers `/api/books`-style search requests with
- *  `page`, and any `/cover` request with `coverBytes` - as `getCoverBytes`
- *  fetches them, never the URL-based `media` field this regressed to (the
- *  bug this file's Cyrillic-title test below is guarding against). */
+/** Answers `/api/books`-style requests with `page`, and any `/cover` request
+ *  with `coverBytes` - never the URL-based `media` field. */
 function catalogWithCovers(page: BotPage<BotBook>, coverBytes = 'COVERBYTES'): typeof fetch {
   return (async (input: string) => {
     const url = new URL(input);
@@ -306,6 +298,77 @@ test('a "more" callback on an unknown session reports it as expired', async () =
 
   assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery', 'sendMessage']);
   assert.match(String(calls[1].body.text), /expired/);
+});
+
+// ---- withCatalog: one reply for any catalog failure, not just a 404 -----
+
+/** A CatalogClient whose every call rejects - standing in for a timeout or
+ *  network error, distinct from the typed 404 `null`. */
+function unreachableApi(): CatalogClient {
+  return new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async () => {
+      throw new Error('network unreachable');
+    }) as typeof fetch,
+  });
+}
+
+test('/search replies when the catalog is unreachable, instead of leaving the user with nothing', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const bot = createBot(BASE_CONFIG, unreachableApi(), { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(messageUpdate('/search hobbit'));
+
+  assert.deepEqual(calls.map((c) => c.method), ['sendMessage']);
+  assert.match(String(calls[0].body.text), /not responding/);
+});
+
+test('a "more" callback replies when the catalog is unreachable', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const bot = createBot(BASE_CONFIG, unreachableApi(), { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+  // Minted directly rather than via a real /search, so `moreResults` finds a
+  // live session and reaches the (failing) catalog.
+  const { token } = createSession('hobbit', 'prefix');
+
+  await bot.handleUpdate(callbackUpdate(moreData(token)));
+
+  assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery', 'sendMessage']);
+  assert.match(String(calls[1].body.text), /not responding/);
+});
+
+test('picking a book replies when the catalog is unreachable', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const bot = createBot(BASE_CONFIG, unreachableApi(), { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(callbackUpdate(pickData(5)));
+
+  assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery', 'sendMessage']);
+  assert.match(String(calls[1].body.text), /not responding/);
+});
+
+test('downloading replies when the catalog is unreachable before the byte fetch even starts', async () => {
+  const { calls, fetchFn } = fakeTelegram();
+  const bot = createBot(BASE_CONFIG, unreachableApi(), { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(callbackUpdate(downloadData(5, 'fb2')));
+
+  assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery', 'sendMessage']);
+  assert.match(String(calls[1].body.text), /not responding/);
+});
+
+test('downloading reports a download-specific failure when the byte fetch itself fails, distinct from a catalog failure', async (t) => {
+  const { calls, fetchFn } = fakeTelegram();
+  const api = new CatalogClient({
+    baseUrl: 'http://api.local',
+    fetchFn: (async () => jsonResponse(book(5))) as typeof fetch,
+  });
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 500 }));
+  const bot = createBot(BASE_CONFIG, api, { botInfo: BOT_INFO, client: { fetch: fetchFn } });
+
+  await bot.handleUpdate(callbackUpdate(downloadData(5, 'fb2')));
+
+  assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery', 'sendMessage']);
+  assert.match(String(calls[1].body.text), /Download failed/);
 });
 
 test('downloading a format streams the file back as a document', async (t) => {

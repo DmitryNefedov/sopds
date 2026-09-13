@@ -1,7 +1,5 @@
-// Encodes/decodes inline-keyboard `callback_data`. Telegram caps it at 64
-// bytes, so this is the one place that format has to stay disciplined — every
-// button the bot sends goes through a builder here, every callback_query
-// handler goes through `parseCallback`.
+// Encodes/decodes inline-keyboard `callback_data`, capped at 64 bytes by
+// Telegram — every button and every callback_query handler goes through here.
 
 export const MAX_CALLBACK_DATA_BYTES = 64;
 

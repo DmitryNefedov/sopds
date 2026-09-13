@@ -6,7 +6,7 @@ import {
   downloadData,
   parseCallback,
   MAX_CALLBACK_DATA_BYTES,
-} from '../src/callback.js';
+} from '../src/telegram/callback.js';
 
 test('moreData/pickData/downloadData round-trip through parseCallback', () => {
   assert.deepEqual(parseCallback(moreData('abc12345')), { kind: 'more', token: 'abc12345' });
@@ -19,9 +19,8 @@ test('moreData/pickData/downloadData round-trip through parseCallback', () => {
 });
 
 test('a page-worth of buttons fits inside the 64-byte callback_data budget', () => {
-  // An 8-char session token (the longest single field session.ts mints) plus
-  // a book id up to 7 digits (comfortably past any real catalog) is what a
-  // "more" or "pick"/"download" button actually has to carry.
+  // An 8-char session token plus a book id up to 7 digits is what a real
+  // "more"/"pick"/"download" button actually has to carry.
   const token = 'a'.repeat(8);
   const bookId = 9_999_999;
   for (const data of [moreData(token), pickData(bookId), downloadData(bookId, 'epub')]) {

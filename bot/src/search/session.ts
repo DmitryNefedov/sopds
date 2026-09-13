@@ -1,9 +1,5 @@
-// Search session: a Title prefix search (or its ADR-0001 title-anywhere
-// fallback) plus its page cursor, addressed by an opaque short token so a
-// paging button can name it within the 64 bytes Telegram allows for
-// `callback_data`. Cache-shaped and deliberately not durable, per CONTEXT.md:
-// a session outlives neither a restart nor eviction, and `getSession` reports
-// a gone one as expired rather than guessing.
+// Search session: a Title prefix search plus its page cursor, addressed by an
+// opaque token. Cache-shaped, not durable — see CONTEXT.md.
 
 export type SearchMode = 'prefix' | 'anywhere';
 
@@ -20,11 +16,8 @@ export interface SearchSession {
  *  this point is indistinguishable from starting a new one anyway. */
 export const SESSION_TTL_MS = 15 * 60 * 1000;
 
-/** Cache-shaped means bounded, not just time-limited: a burst of searches
- *  cannot grow this without end. Insertion order (oldest first) is what a
- *  `Map` iterates in, so the eviction below is a plain FIFO, not a true LRU —
- *  fine here since `getSession` already refreshes `touchedAt` and the TTL
- *  sweep is what clears out genuinely idle entries. */
+/** Cache-shaped: bounded, not just time-limited. FIFO eviction (oldest first)
+ *  since `getSession` already refreshes `touchedAt`. */
 export const MAX_SESSIONS = 500;
 
 const sessions = new Map<string, SearchSession>();
@@ -62,9 +55,8 @@ export function createSession(query: string, mode: SearchMode): { token: string;
   return { token, session };
 }
 
-/** Null for a token that is gone — expired, evicted, or from before a restart
- *  — never guessed at. A live lookup refreshes `touchedAt`, so an
- *  actively-paged search stays alive past the idle TTL. */
+/** Null for a token that's gone — expired, evicted, or pre-restart. A live
+ *  lookup refreshes `touchedAt`, extending life past the idle TTL. */
 export function getSession(token: string): SearchSession | null {
   const session = sessions.get(token);
   if (!session) return null;
@@ -82,8 +74,7 @@ export function setPage(token: string, page: number): void {
   if (session) session.page = page;
 }
 
-/** Test hook: a restart is not durable, so nothing here should outlive one —
- *  this simulates that in-process. */
+/** Test hook: a restart is not durable, so nothing here should outlive one. */
 export function clearAllSessions(): void {
   sessions.clear();
 }

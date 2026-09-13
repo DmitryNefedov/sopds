@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runSearch, moreResults } from '../src/search-flow.js';
-import { CatalogClient } from '../src/api-client.js';
-import type { BotBook, BotPage } from '../src/api-client.js';
-import { clearAllSessions, getSession } from '../src/session.js';
-import { hasButtons } from '../src/result-page.js';
+import { runSearch, moreResults } from '../src/search/search-flow.js';
+import { CatalogClient } from '../src/catalog/api-client.js';
+import type { BotBook, BotPage } from '../src/catalog/api-client.js';
+import { clearAllSessions, getSession } from '../src/search/session.js';
+import { hasButtons } from '../src/telegram/result-page.js';
 
 const book = (id: number): BotBook => ({
   id,

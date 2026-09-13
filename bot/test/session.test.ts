@@ -8,7 +8,7 @@ import {
   sessionCount,
   MAX_SESSIONS,
   SESSION_TTL_MS,
-} from '../src/session.js';
+} from '../src/search/session.js';
 
 test.beforeEach(() => clearAllSessions());
 

@@ -1,6 +1,6 @@
 import { buildConfig } from './config.js';
-import { CatalogClient } from './api-client.js';
-import { createBot } from './bot.js';
+import { CatalogClient } from './catalog/api-client.js';
+import { createBot } from './telegram/bot.js';
 
 // Process entry point: long-polls the Telegram Bot API. No port to open, no
 // database to reach — the catalog API is the only thing this depends on.
