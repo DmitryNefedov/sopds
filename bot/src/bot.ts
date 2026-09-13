@@ -102,6 +102,14 @@ export function createBot(
   // else runs for them.
   bot.use(async (ctx, next) => {
     if (isAllowed(config, ctx)) return next();
+    console.warn('sopds-bot: rejected unauthorized access', {
+      userId: ctx.from?.id,
+      username: ctx.from?.username,
+      chatId: ctx.chat?.id,
+      chatType: ctx.chat?.type,
+      text: ctx.message?.text,
+      callbackData: ctx.callbackQuery?.data,
+    });
     if (ctx.callbackQuery) {
       return ctx.answerCallbackQuery({ text: NOT_AUTHORIZED, show_alert: true });
     }
