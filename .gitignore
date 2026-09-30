@@ -14,6 +14,7 @@ server/books/
 server/dist/
 /books/
 web/dist/
+bot/dist/
 .env
 *.tsbuildinfo
 

@@ -1,0 +1,508 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "SOPDS — OPDS & web e-book catalog",
+  "output": ".archify/architecture-sopds-20260930-080930/sopds.html",
+  "quality_profile": "showcase",
+  "repository": {
+   "url": "git@github.com:DmitryNefedov/sopds.git",
+   "link_mode": "local-only",
+   "revision": "f3de55f0372dd2fe722be2fa9fb97cd69ea8339b"
+  }
+ },
+ "components": [
+  {
+   "id": "telegram",
+   "type": "external",
+   "label": "Telegram",
+   "sublabel": "Bot API",
+   "pos": [
+    40,
+    40
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "bot/src/telegram/bot.ts",
+     "line": 78,
+     "end_line": 78,
+     "label": "new Bot(token)"
+    },
+    {
+     "path": "bot/src/index.ts",
+     "line": 17,
+     "end_line": 17,
+     "label": "bot.start()"
+    }
+   ]
+  },
+  {
+   "id": "bot",
+   "type": "backend",
+   "label": "Telegram bot",
+   "sublabel": "grammY · bot profile",
+   "pos": [
+    320,
+    40
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "tag": "user/chat allowlist",
+   "sources": [
+    {
+     "path": "bot/src/catalog/api-client.ts",
+     "line": 94,
+     "end_line": 111,
+     "label": "catalog calls + timeout"
+    },
+    {
+     "path": "bot/src/telegram/bot.ts",
+     "line": 18,
+     "end_line": 25,
+     "label": "allowlist check"
+    },
+    {
+     "path": "docker-compose.yml",
+     "line": 69,
+     "end_line": 89,
+     "label": "bot service"
+    }
+   ]
+  },
+  {
+   "id": "readers",
+   "type": "external",
+   "label": "OPDS reader apps",
+   "sublabel": "e-readers",
+   "pos": [
+    980,
+    40
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "docker-compose.yml",
+     "line": 54,
+     "end_line": 56,
+     "label": "port 8000 exposed"
+    },
+    {
+     "path": "server/src/routes/opds.ts",
+     "line": 123,
+     "end_line": 141,
+     "label": "OPDS feed routes"
+    }
+   ]
+  },
+  {
+   "id": "browser",
+   "type": "external",
+   "label": "Browser",
+   "sublabel": "React SPA",
+   "pos": [
+    40,
+    240
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "web/src/api.js",
+     "line": 6,
+     "end_line": 12,
+     "label": "fetch /api"
+    }
+   ]
+  },
+  {
+   "id": "ui",
+   "type": "frontend",
+   "label": "Web UI",
+   "sublabel": "nginx · React + MUI",
+   "pos": [
+    320,
+    240
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "web/nginx.conf",
+     "line": 31,
+     "end_line": 39,
+     "label": "proxy + SPA"
+    },
+    {
+     "path": "docker-compose.yml",
+     "line": 91,
+     "end_line": 99,
+     "label": "ui service"
+    }
+   ]
+  },
+  {
+   "id": "routes",
+   "type": "backend",
+   "label": "API (Express)",
+   "sublabel": "routes: api · opds · admin",
+   "pos": [
+    630,
+    240
+   ],
+   "size": [
+    200,
+    64
+   ],
+   "tag": ":8000",
+   "sources": [
+    {
+     "path": "server/src/app.ts",
+     "line": 25,
+     "end_line": 49,
+     "label": "createApp routers"
+    },
+    {
+     "path": "server/src/index.ts",
+     "line": 26,
+     "end_line": 39,
+     "label": "listen + Scanner.start"
+    },
+    {
+     "path": "server/src/routes/admin.ts",
+     "line": 44,
+     "end_line": 52,
+     "label": "X-Admin-Token guard"
+    }
+   ]
+  },
+  {
+   "id": "catalog",
+   "type": "backend",
+   "label": "Catalog",
+   "sublabel": "search · browse · hydrate",
+   "pos": [
+    980,
+    240
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "server/src/services/catalog.ts",
+     "line": 45,
+     "end_line": 50,
+     "label": "hydrateBook queries"
+    },
+    {
+     "path": "server/src/services/catalog.ts",
+     "line": 295,
+     "end_line": 295,
+     "label": "searchBooks"
+    }
+   ]
+  },
+  {
+   "id": "pg",
+   "type": "database",
+   "label": "PostgreSQL 16",
+   "sublabel": "schema via Liquibase",
+   "pos": [
+    1260,
+    240
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "server/Dockerfile.postgres",
+     "line": 14,
+     "end_line": 43,
+     "label": "Liquibase-built schema"
+    },
+    {
+     "path": "server/src/db/backend.ts",
+     "line": 55,
+     "end_line": 60,
+     "label": "pg.Pool"
+    }
+   ]
+  },
+  {
+   "id": "cache",
+   "type": "database",
+   "label": "Convert cache",
+   "sublabel": "volume /app/data",
+   "pos": [
+    320,
+    440
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "server/src/services/convert/index.ts",
+     "line": 187,
+     "end_line": 226,
+     "label": "cache write + dir"
+    },
+    {
+     "path": "docker-compose.yml",
+     "line": 52,
+     "end_line": 53,
+     "label": "cache volume"
+    }
+   ]
+  },
+  {
+   "id": "delivery",
+   "type": "backend",
+   "label": "Book delivery",
+   "sublabel": "read bytes · convert",
+   "pos": [
+    630,
+    440
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "tag": "fb2 ⇄ epub ⇄ mobi",
+   "sources": [
+    {
+     "path": "server/src/routes/api.ts",
+     "line": 82,
+     "end_line": 107,
+     "label": "download route"
+    },
+    {
+     "path": "server/src/connectors/bookfiles.ts",
+     "line": 25,
+     "end_line": 47,
+     "label": "readBookBytes"
+    },
+    {
+     "path": "server/src/services/convert/index.ts",
+     "line": 104,
+     "end_line": 133,
+     "label": "ebook-convert path"
+    }
+   ]
+  },
+  {
+   "id": "scanner",
+   "type": "backend",
+   "label": "Scanner",
+   "sublabel": "manual · cron · fs.watch",
+   "pos": [
+    1260,
+    440
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "server/src/services/scanner/index.ts",
+     "line": 55,
+     "end_line": 100,
+     "label": "trigger/queue/start"
+    },
+    {
+     "path": "server/src/services/scanner/engine.ts",
+     "line": 685,
+     "end_line": 704,
+     "label": "zip walk + parse"
+    }
+   ]
+  },
+  {
+   "id": "books",
+   "type": "database",
+   "label": "Book collection",
+   "sublabel": "/books (read-only)",
+   "pos": [
+    980,
+    620
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "docker-compose.yml",
+     "line": 50,
+     "end_line": 51,
+     "label": "books mount :ro"
+    },
+    {
+     "path": "server/src/connectors/zip.ts",
+     "line": 50,
+     "end_line": 50,
+     "label": "streaming zip open"
+    },
+    {
+     "path": "server/src/connectors/zip.ts",
+     "line": 183,
+     "end_line": 183,
+     "label": "seek read"
+    }
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "browser-ui",
+   "to": "ui",
+   "label": "HTTP",
+   "variant": "emphasis",
+   "from": "browser"
+  },
+  {
+   "id": "ui-routes",
+   "to": "routes",
+   "label": "proxy /api, /opds",
+   "variant": "emphasis",
+   "from": "ui"
+  },
+  {
+   "id": "routes-catalog",
+   "to": "catalog",
+   "label": "search / browse",
+   "variant": "emphasis",
+   "from": "routes"
+  },
+  {
+   "id": "catalog-pg",
+   "to": "pg",
+   "label": "SQL",
+   "from": "catalog"
+  },
+  {
+   "id": "bot-telegram",
+   "to": "telegram",
+   "label": "long polling",
+   "from": "bot"
+  },
+  {
+   "id": "bot-routes",
+   "to": "routes",
+   "label": "GET /api/books, /search",
+   "fromSide": "right",
+   "toSide": "top",
+   "from": "bot"
+  },
+  {
+   "id": "readers-routes",
+   "to": "routes",
+   "label": "OPDS 1.1",
+   "fromSide": "left",
+   "toSide": "top",
+   "from": "readers"
+  },
+  {
+   "id": "routes-delivery",
+   "to": "delivery",
+   "label": "download / cover",
+   "fromSide": "bottom",
+   "toSide": "top",
+   "from": "routes"
+  },
+  {
+   "id": "delivery-cache",
+   "to": "cache",
+   "label": "cache results",
+   "variant": "dashed",
+   "from": "delivery"
+  },
+  {
+   "id": "delivery-books",
+   "to": "books",
+   "label": "read book",
+   "fromSide": "bottom",
+   "toSide": "left",
+   "from": "delivery"
+  },
+  {
+   "id": "routes-scanner",
+   "to": "scanner",
+   "label": "POST /api/admin/scan",
+   "variant": "security",
+   "fromSide": "bottom",
+   "toSide": "left",
+   "from": "routes"
+  },
+  {
+   "id": "scanner-pg",
+   "to": "pg",
+   "label": "batch INSERT",
+   "fromSide": "top",
+   "toSide": "bottom",
+   "from": "scanner"
+  },
+  {
+   "id": "scanner-books",
+   "to": "books",
+   "label": "walk + watch",
+   "fromSide": "bottom",
+   "toSide": "right",
+   "from": "scanner"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Entry points",
+   "items": [
+    "Browser via nginx (ui :8989 → api)",
+    "OPDS apps hit api :8000 directly",
+    "Telegram bot: pure API client, opt-in profile"
+   ]
+  },
+  {
+   "dot": "emerald",
+   "title": "Catalog & delivery",
+   "items": [
+    "Search: title, any author, any series",
+    "Zip archives streamed, never extracted",
+    "Convert via pure-JS IR or Calibre ebook-convert"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Scanning",
+   "items": [
+    "One mutex; overlapping triggers queue one rerun",
+    "Batched commits keep books searchable mid-import"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "Access control",
+   "items": [
+    "Admin routes need X-Admin-Token when set",
+    "Bot limited by TELEGRAM_ALLOWED_USERS/CHATS"
+   ]
+  }
+ ]
+}

@@ -95,6 +95,88 @@ term; this file is the prose.
 - **Page&lt;T&gt;** — a slice of a listing: `items` plus `total` / `page` /
   `limit` / `pages` / `has_next` / `has_prev`.
 
+## Telegram bot
+
+The bot is a catalog *client*, not a second catalog: it reads the same HTTP API
+an OPDS reader would and owns no schema. Its vocabulary is therefore about
+presenting and paging Books, not about finding them.
+
+- **Title prefix search** — the bot's only search: Books whose title *starts
+  with* the query (`catalog.listBooks`'s `prefix`, i.e. `search_title LIKE
+  'Q%'` after `normalize` upper-cases and trims). Deliberately *not* **Unified
+  search**, which also matches author and series names and so answers a
+  query with Books whose titles contain none of it. The cost is that a word
+  from the middle of a title does not match; see
+  [ADR 0001](docs/adr/0001-title-only-prefix-search-for-the-bot.md).
+- **Result page** — one batch of five Books, each sent as its own
+  photo+caption message, followed by one further message carrying the
+  summary and selection buttons. The unit the user pages through: "more"
+  means the next result page, never a longer one. Deliberately not a
+  `sendMediaGroup` album: Telegram only surfaces an album's per-photo
+  captions once a user taps into one, showing none of them in the collapsed
+  grid the chat feed renders by default, which defeats the point of putting
+  anything in the caption at all. Each cover is numbered by its 1-based
+  position in the page, and that same number prefixes both its caption and
+  its pick button in the summary message, so a user can match a cover to its
+  button without recounting — the number resets each page rather than
+  accumulating across "more" pages. Each cover's caption carries more than
+  its bare title: title, authors, series, language, and an annotation
+  snippet, so a user can tell same-titled or same-cover editions apart
+  without opening any of them — truncated to Telegram's photo caption limit
+  (1024 bytes), longest fields (the annotation) losing their tail first. The
+  pick button in the summary message stays a numbered but otherwise bare
+  title/author, independent of the fuller caption, since it is also
+  Telegram's inline-button label (64 bytes).
+- **Book detail** — the full message a pick sends back: everything the web
+  UI's Book detail page shows for that Book (title, authors, series, genres,
+  format/size/date/language, and the *whole* annotation, not just a snippet)
+  next to its Format offer buttons, so the format choice isn't made blind on
+  a bare title.
+- **Search session** — a **Title prefix search** plus its page cursor, addressed
+  by an opaque short token so a paging button can name it within the 64 bytes
+  Telegram allows. Cache-shaped and deliberately not durable: a session
+  outlives neither a restart nor eviction, and a button naming a session that
+  is gone reports the search as expired rather than guessing.
+- **Format offer** — the formats a given Book can actually be delivered in:
+  every convertible format when its own format is one of them, otherwise its
+  native format alone. Distinct from the API's `download_formats`, which omits
+  a non-convertible native format entirely and so cannot answer this question.
+- **Allowlist** — `TELEGRAM_ALLOWED_USERS` and `TELEGRAM_ALLOWED_CHATS`
+  (`config.allowedUsers` / `allowedChats`), two independent sets of Telegram
+  numeric ids — user ids and group/supergroup chat ids (negative)
+  respectively. Access is granted whenever *either* matches: a listed user's
+  identity travels with them into any chat, allowlisted or not, while a
+  listed group lets in any of its members, individually listed or not. Both
+  `null` (unset, empty, or entirely non-numeric) means unrestricted, which is
+  the default — the catalog itself has no notion of a user to gate access
+  with, so this pair is the only access control the bot has. A sender outside
+  both gets a plain refusal (or a callback alert) before any other handler
+  runs, never a silent drop.
+- **Catalog timeout** — every `CatalogClient` request carries the same
+  `CATALOG_TIMEOUT_MS` (10s) abort budget, so a hung SOPDS API fails one
+  request rather than hanging it forever. This matters because grammY's
+  default `bot.start()` processes updates one at a time: without a bound, one
+  stuck request would queue every other chat's update behind it, not just the
+  one that triggered it. `withCatalog` (in `bot.ts`) is the other half — it
+  wraps every catalog call a handler makes and replies with one plain message
+  on any failure a typed `null` doesn't already cover (a timeout, a network
+  error, a non-2xx status), so a failure ends in a reply instead of vanishing
+  into `bot.catch`'s bare `console.error`.
+
+Implementation, `bot/src/` (see "Layout" below for how the directory is
+grouped): `search/search-flow.ts` runs a Title prefix search and its ADR-0001
+fallback; `search/session.ts` is the Search session store; `telegram/result-page.ts`
+renders a Result page; `telegram/book-text.ts` renders a `BotBook` as text — a
+pick button's bare label, a Result page's caption, and the full Book detail
+message — so all three stay in one place instead of drifting apart;
+`telegram/format-offer.ts` computes a Format offer; `config.ts` parses the
+Allowlist; `catalog/api-client.ts` is the only thing that speaks HTTP to the
+server, and gives every request it makes the same Catalog timeout;
+`telegram/bot.ts` wires all of it to grammY's commands and `callback_query`
+handling (the Allowlist check is the first middleware, ahead of everything
+else; `withCatalog` wraps every catalog call a handler makes), with
+`telegram/callback.ts` owning the inline-button `callback_data` encoding.
+
 ## Layout
 
 `server/src/` is grouped by role, not by file type:
@@ -108,6 +190,18 @@ term; this file is the prose.
 | `services/`   | `catalog`, `settings`, `convert/`, `scanner/` — the domain     |
 | `routes/`     | Express routers: `api`, `opds`, `admin`, `debug`               |
 | `utils/`      | leaves with no domain knowledge: `http`, `lang`, `cron`, `download` |
+
+`bot/src/` is grouped the same way, by the seam each file sits at rather than
+alphabetically:
+
+| directory   | holds                                                                 |
+| ----------- | ---------------------------------------------------------------------- |
+| `catalog/`  | `api-client.ts` — the only thing that speaks HTTP to the server         |
+| `search/`   | `search-flow.ts`, `session.ts` — Title prefix search and its Search session |
+| `telegram/` | `bot.ts`, `callback.ts`, `result-page.ts`, `book-text.ts`, `format-offer.ts` — rendering and wiring for Telegram itself |
+
+`config.ts` and `index.ts` stay at the top of `bot/src/`: wiring, not a seam of
+their own. See "Telegram bot" above for what each file owns.
 
 `app.ts` assembles the Express app; `index.ts` is the process entry point that
 opens the port and starts the Scanner. Dependencies point inward — `routes` use

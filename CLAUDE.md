@@ -6,14 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SimpleOPDS — an OPDS 1.1 + web catalog server for a local e-book collection
 (FB2, EPUB, MOBI, PDF, DjVu, and `.zip` archives of those). Express +
-TypeScript (ESM) API in `server/`, React + Vite + MUI UI in `web/`, PostgreSQL
-schema managed by Liquibase (`server/db/changelog/`). npm workspaces root at
-the repo root.
+TypeScript (ESM) API in `server/`, React + Vite + MUI UI in `web/`, a grammY +
+TypeScript (ESM) Telegram bot in `bot/`, PostgreSQL schema managed by Liquibase
+(`server/db/changelog/`). npm workspaces root at the repo root.
 
-Read [`CONTEXT.md`](CONTEXT.md) before working in `server/` — it's the domain
-glossary (entity shapes, search/scan/hydration algorithms, module seams) and
-is denser and more load-bearing than this file. [`README.md`](README.md) has
-the feature list, Docker deploy flow, and API endpoint table.
+Read [`CONTEXT.md`](CONTEXT.md) before working in `server/` or `bot/` — it's
+the domain glossary (entity shapes, search/scan/hydration algorithms, module
+seams, and the bot's own vocabulary) and is denser and more load-bearing than
+this file. [`README.md`](README.md) has the feature list, Docker deploy flow,
+and API endpoint table.
+
+`bot/` is a pure client of `server/`'s HTTP API — it imports nothing from
+`server/` and the server has no bot-specific code (see
+[ADR 0001](docs/adr/0001-title-only-prefix-search-for-the-bot.md)). It has its
+own `package.json`/`tsconfig.json`/tests, mirroring `server/`'s conventions
+below wherever they apply (strict TS ESM, `node:test`, no mocking the thing
+under test).
 
 ## Commands
 
@@ -47,6 +55,17 @@ per module rather than running the whole suite.
 Web (`web/`): `npm run dev` (http://localhost:5173, proxies `/api` etc. to the
 API), `npm run build`, `npm run preview`. No lint/test scripts configured
 there.
+
+Bot (`bot/`), needs `TELEGRAM_BOT_TOKEN` and a running API (`SOPDS_API_URL`,
+default `http://localhost:8000`):
+
+```bash
+npm run dev                    # tsx watch, long-polls Telegram
+npm run build && npm start     # compile to dist/ and run
+npm run typecheck              # tsc --noEmit
+npm test                       # node:test via tsx - no token or network needed,
+                                # fakes both the catalog API and the Bot API
+```
 
 Single-process prod-like run: `cd web && npm run build`, then
 `cd ../server && npm start` serves `web/dist` at `/`.

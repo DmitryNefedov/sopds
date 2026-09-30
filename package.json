@@ -6,7 +6,8 @@
   "license": "MIT",
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "bot"
   ],
   "scripts": {
     "scan": "npm --workspace server run scan",
@@ -14,9 +15,11 @@
     "server": "npm --workspace server start",
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
+    "dev:bot": "npm --workspace bot run dev",
+    "bot": "npm --workspace bot start",
     "build": "npm --workspace web run build",
     "start": "npm run build && npm --workspace server start",
-    "test": "npm --workspace server test"
+    "test": "npm --workspace server test && npm --workspace bot test"
   },
   "engines": {
     "node": ">=22"
