@@ -3,11 +3,12 @@
  "diagram_type": "architecture",
  "meta": {
   "title": "SOPDS — OPDS & web e-book catalog",
-  "output": ".archify/architecture-sopds-20260930-080930/sopds.html",
+  "output": "docs/architecture/sopds-architecture.html",
   "quality_profile": "showcase",
   "repository": {
-   "url": "git@github.com:DmitryNefedov/sopds.git",
-   "link_mode": "local-only",
+   "url": "https://github.com/DmitryNefedov/sopds.git",
+   "provider": "github",
+   "link_mode": "web",
    "revision": "f3de55f0372dd2fe722be2fa9fb97cd69ea8339b"
   }
  },
